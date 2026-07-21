@@ -1,0 +1,2 @@
+sed -i 's/\.catch(console\.error);/.then(async res => { if (!res.ok) alert("Aviso: Falha ao enviar notificação por e-mail."); }).catch(e => alert("Erro ao tentar enviar e-mail de notificação."));/g' App.tsx
+sed -i 's/\.catch(e => console\.log('\''Mail error'\'', e));/.then(async res => { if (!res.ok) alert("Aviso: Falha ao enviar notificação por e-mail."); }).catch(e => alert("Erro ao tentar enviar e-mail de notificação."));/g' App.tsx
