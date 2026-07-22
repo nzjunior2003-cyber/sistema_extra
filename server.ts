@@ -75,7 +75,11 @@ async function startServer() {
   } else {
     const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));
-    app.get('*', (req, res) => {
+    // Usamos app.use (sem padrão de rota) em vez de app.get('*', ...)
+    // porque versões recentes do path-to-regexp (usado internamente
+    // pelo Express) não aceitam mais o coringa solto '*' e lançam
+    // "Missing parameter name at index 1: *".
+    app.use((req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }
