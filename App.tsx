@@ -4,7 +4,7 @@ import {
   Flame, Sun, Moon, FileText, DollarSign, ClipboardList, 
   Share2, Upload, Wifi, WifiOff, Database, CheckCircle2, 
   User, Search, Plus, X, Star, Trash2, Check, Download,
-  GripVertical, Camera, Eraser, LayoutDashboard, ShieldCheck, Banknote, LogOut, Lock, AlertTriangle, Clock, ExternalLink, Users, UserPlus, History
+  GripVertical, Camera, Eraser, LayoutDashboard, ShieldCheck, Banknote, LogOut, Lock, AlertTriangle, Clock, ExternalLink, Users, UserPlus, History, Eye, EyeOff
 } from 'lucide-react';
 import { AppState, DocumentType, Soldier, CostSheetItem, ReportEffectiveItem, ReportServiceItem } from './types';
 import { RANKS, UBMS, UNIT_VALUE_DEFAULT, EXTERNAL_DB_URL, REPORT_LOGISTICS_ITEMS, REPORT_VEHICLE_ITEMS, OCCURRENCE_CODES, ROLES, MEMO_LEGAL_TEXT } from './constants';
@@ -131,6 +131,7 @@ const App: React.FC = () => {
   const [editingEscalaId, setEditingEscalaId] = useState<string | null>(null);
   const [loginData, setLoginData] = useState({ matricula: '', senha: '' });
   const [loginError, setLoginError] = useState('');
+  const [showLoginPassword, setShowLoginPassword] = useState(false);
 
   // States para Login Customizado e Recuperação
   const [activeSubstituteId, setActiveSubstituteId] = useState<string | null>(null);
@@ -146,7 +147,9 @@ const App: React.FC = () => {
   });
   const [showFirstAccessModal, setShowFirstAccessModal] = useState(false);
   const [firstAccessUser, setFirstAccessUser] = useState<any>(null);
-  const [firstAccessData, setFirstAccessData] = useState({ email: '', novaSenha: '', nomeGuerra: '' });
+  const [firstAccessData, setFirstAccessData] = useState({ email: '', novaSenha: '', confirmarSenha: '', nomeGuerra: '' });
+  const [showFirstAccessPassword, setShowFirstAccessPassword] = useState(false);
+  const [showFirstAccessConfirmPassword, setShowFirstAccessConfirmPassword] = useState(false);
 
   const [showForgotModal, setShowForgotModal] = useState(false);
   const [forgotStep, setForgotStep] = useState(1);
@@ -212,6 +215,32 @@ const App: React.FC = () => {
         localStorage.setItem('CUSTOM_USERS_DB', JSON.stringify(nextObj));
         return nextObj;
     });
+  };
+
+  const getActiveAdminUsers = () => {
+    const combined = new Map<string, any>();
+
+    [...MOCK_USERS, ...Object.values(customUsersDict)].forEach((user: any) => {
+      if (!user?.matricula) return;
+      const existing = combined.get(user.matricula) || { matricula: user.matricula, nome: user.nome || user.matricula, posto: user.posto || '', permissoes: [] };
+      combined.set(user.matricula, {
+        ...existing,
+        ...user,
+        permissoes: Array.from(new Set([...(existing.permissoes || []), ...(user.permissoes || [])]))
+      });
+    });
+
+    roleRequests.forEach((req: any) => {
+      if (!req?.matricula) return;
+      const current = combined.get(req.matricula) || { matricula: req.matricula, nome: req.nome || req.matricula, posto: '', permissoes: [] };
+      combined.set(req.matricula, {
+        ...current,
+        nome: current.nome || req.nome || req.matricula,
+        permissoes: current.permissoes || []
+      });
+    });
+
+    return Array.from(combined.values()).filter((user: any) => (user.permissoes || []).length > 0 || user.matricula === 'administrador');
   };
 
   const requestRole = async (role: string, ubm?: string) => {
@@ -640,6 +669,30 @@ const App: React.FC = () => {
      }
   };
 
+  const handleDeleteUser = (matricula: string) => {
+     if (matricula === 'administrador') {
+        alert("Não é possível excluir o usuário administrador padrão.");
+        return;
+     }
+
+     if (!window.confirm('Deseja realmente excluir este usuário e remover todos os acessos do sistema?')) {
+        return;
+     }
+
+     const currentDict = JSON.parse(localStorage.getItem('CUSTOM_USERS_DB') || '{}');
+     delete currentDict[matricula];
+     localStorage.setItem('CUSTOM_USERS_DB', JSON.stringify(currentDict));
+     setCustomUsersDict(currentDict);
+
+     const nextReqs = JSON.parse(localStorage.getItem('ROLE_REQUESTS') || '[]').filter((r: any) => String(r.matricula) !== String(matricula));
+     localStorage.setItem('ROLE_REQUESTS', JSON.stringify(nextReqs));
+     setRoleRequests(nextReqs);
+
+     if (currentUser && currentUser.matricula === matricula) {
+        setCurrentUser(null);
+     }
+  };
+
   const handleDelegateFunction = (newSoldier: Soldier) => {
      if (!delegationModal.escalaId) return;
      const escala = escalas.find(e => e.id === delegationModal.escalaId);
@@ -723,7 +776,7 @@ const App: React.FC = () => {
          setLoginError('');
       } else {
          setCurrentUser(foundUser);
-         setActiveTab('PORTAL');
+         setActiveTab((foundUser?.permissoes || []).includes('ADMIN') ? 'ADMIN' : 'PORTAL');
          setLoginError('');
       }
     } else {
@@ -754,6 +807,10 @@ const App: React.FC = () => {
         alert("Não foi possível validar o domínio do e-mail no servidor (pode estar offline). Tente novamente mais tarde."); return;
     }
 
+    if (firstAccessData.novaSenha !== firstAccessData.confirmarSenha) {
+       alert("A confirmação de senha não confere."); return;
+    }
+
     const finalUser = { 
       ...firstAccessUser, 
       email: firstAccessData.email, 
@@ -763,7 +820,7 @@ const App: React.FC = () => {
     delete finalUser.isFirstAccess;
     saveCustomUser(finalUser.matricula, finalUser);
     setCurrentUser(finalUser);
-    setActiveTab('PORTAL');
+    setActiveTab((finalUser?.permissoes || []).includes('ADMIN') ? 'ADMIN' : 'PORTAL');
     setShowFirstAccessModal(false);
   };
 
@@ -2196,7 +2253,10 @@ const App: React.FC = () => {
               <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1">Senha</label>
               <div className="relative">
                 <Lock className="absolute left-3 top-3 text-gray-400" size={18} />
-                <input type="password" required className="w-full pl-10 pr-3 py-2 border rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white" value={loginData.senha} onChange={e => setLoginData({...loginData, senha: e.target.value})} />
+                <input type={showLoginPassword ? 'text' : 'password'} required className="w-full pl-10 pr-3 py-2 border rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white" value={loginData.senha} onChange={e => setLoginData({...loginData, senha: e.target.value})} />
+                <button type="button" onClick={() => setShowLoginPassword(prev => !prev)} className="absolute right-3 top-2.5 text-gray-500 dark:text-gray-300">
+                  {showLoginPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                </button>
               </div>
             </div>
             
@@ -2225,7 +2285,21 @@ const App: React.FC = () => {
                   </div>
                   <div>
                     <label className="block text-sm font-bold text-gray-700 mb-1">Nova Senha</label>
-                    <input type="password" required className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600" value={firstAccessData.novaSenha} onChange={e => setFirstAccessData({...firstAccessData, novaSenha: e.target.value})} />
+                    <div className="relative">
+                      <input type={showFirstAccessPassword ? 'text' : 'password'} required className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600 pr-10" value={firstAccessData.novaSenha} onChange={e => setFirstAccessData({...firstAccessData, novaSenha: e.target.value})} />
+                      <button type="button" onClick={() => setShowFirstAccessPassword(prev => !prev)} className="absolute right-3 top-2.5 text-gray-500">
+                        {showFirstAccessPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                      </button>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-bold text-gray-700 mb-1">Confirmar Senha</label>
+                    <div className="relative">
+                      <input type={showFirstAccessConfirmPassword ? 'text' : 'password'} required className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600 pr-10" value={firstAccessData.confirmarSenha} onChange={e => setFirstAccessData({...firstAccessData, confirmarSenha: e.target.value})} />
+                      <button type="button" onClick={() => setShowFirstAccessConfirmPassword(prev => !prev)} className="absolute right-3 top-2.5 text-gray-500">
+                        {showFirstAccessConfirmPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                      </button>
+                    </div>
                   </div>
                </div>
                <div className="mt-6 flex justify-end gap-2">
@@ -2299,36 +2373,40 @@ const App: React.FC = () => {
         </div>
 
         <nav className="flex-1 p-4 space-y-2 overflow-y-auto">
-          <button onClick={() => setActiveTab('PORTAL')} className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg transition-all ${activeTab === 'PORTAL' ? 'bg-yellow-500 text-cbmpa-900 font-bold' : 'hover:bg-cbmpa-800 text-white'}`}>
-            <LayoutDashboard size={20} /><span>Meu Portal</span>
-          </button>
+          {!(currentUser?.permissoes || []).includes('ADMIN') && (
+            <>
+              <button onClick={() => setActiveTab('PORTAL')} className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg transition-all ${activeTab === 'PORTAL' ? 'bg-yellow-500 text-cbmpa-900 font-bold' : 'hover:bg-cbmpa-800 text-white'}`}>
+                <LayoutDashboard size={20} /><span>Meu Portal</span>
+              </button>
 
-          <button onClick={() => setActiveTab('SOLICITAR_PERFIL')} className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg transition-all ${activeTab === 'SOLICITAR_PERFIL' ? 'bg-yellow-500 text-cbmpa-900 font-bold' : 'hover:bg-cbmpa-800 text-white'}`}>
-            <UserPlus size={20} /><span>Solicitar Perfil</span>
-          </button>
+              <button onClick={() => setActiveTab('SOLICITAR_PERFIL')} className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg transition-all ${activeTab === 'SOLICITAR_PERFIL' ? 'bg-yellow-500 text-cbmpa-900 font-bold' : 'hover:bg-cbmpa-800 text-white'}`}>
+                <UserPlus size={20} /><span>Solicitar Perfil</span>
+              </button>
 
-          {(currentUser?.permissoes || []).includes('ESCALANTE') && (
-            <button onClick={() => setActiveTab('ESCALANTE')} className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg transition-all ${activeTab === 'ESCALANTE' ? 'bg-yellow-500 text-cbmpa-900 font-bold' : 'hover:bg-cbmpa-800 text-white'}`}>
-              <Plus size={20} /><span>Criar Escala</span>
-            </button>
-          )}
+              {(currentUser?.permissoes || []).includes('ESCALANTE') && (
+                <button onClick={() => setActiveTab('ESCALANTE')} className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg transition-all ${activeTab === 'ESCALANTE' ? 'bg-yellow-500 text-cbmpa-900 font-bold' : 'hover:bg-cbmpa-800 text-white'}`}>
+                  <Plus size={20} /><span>Criar Escala</span>
+                </button>
+              )}
 
-          {escalas.some(e => (e.comandanteMatricula === currentUser.matricula || e.auxiliarMatricula === currentUser.matricula) && (e.status === 'em_edicao' || e.status === 'esclarecimento_solicitado')) && (
-            <button onClick={() => setActiveTab('COMANDANTE')} className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg transition-all ${activeTab === 'COMANDANTE' ? 'bg-yellow-500 text-cbmpa-900 font-bold' : 'hover:bg-cbmpa-800 text-white'}`}>
-              <ClipboardList size={20} /><span>Atestar Missões</span><span className="bg-red-500 text-white text-xs px-2 rounded-full">!</span>
-            </button>
-          )}
+              {escalas.some(e => (e.comandanteMatricula === currentUser.matricula || e.auxiliarMatricula === currentUser.matricula) && (e.status === 'em_edicao' || e.status === 'esclarecimento_solicitado')) && (
+                <button onClick={() => setActiveTab('COMANDANTE')} className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg transition-all ${activeTab === 'COMANDANTE' ? 'bg-yellow-500 text-cbmpa-900 font-bold' : 'hover:bg-cbmpa-800 text-white'}`}>
+                  <ClipboardList size={20} /><span>Atestar Missões</span><span className="bg-red-500 text-white text-xs px-2 rounded-full">!</span>
+                </button>
+              )}
 
-          {((currentUser?.permissoes || []).includes('APROVADOR') || escalas.some(e => e.homologadorMatricula === currentUser.matricula && e.status === 'atestado')) && (
-            <button onClick={() => setActiveTab('APROVADOR')} className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg transition-all ${activeTab === 'APROVADOR' ? 'bg-yellow-500 text-cbmpa-900 font-bold' : 'hover:bg-cbmpa-800 text-white'}`}>
-              <ShieldCheck size={20} /><span>Homologação</span>
-            </button>
-          )}
+              {((currentUser?.permissoes || []).includes('APROVADOR') || escalas.some(e => e.homologadorMatricula === currentUser.matricula && e.status === 'atestado')) && (
+                <button onClick={() => setActiveTab('APROVADOR')} className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg transition-all ${activeTab === 'APROVADOR' ? 'bg-yellow-500 text-cbmpa-900 font-bold' : 'hover:bg-cbmpa-800 text-white'}`}>
+                  <ShieldCheck size={20} /><span>Homologação</span>
+                </button>
+              )}
 
-          {(currentUser?.permissoes || []).includes('PAGAMENTO') && (
-            <button onClick={() => setActiveTab('PAGAMENTO')} className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg transition-all ${activeTab === 'PAGAMENTO' ? 'bg-yellow-500 text-cbmpa-900 font-bold' : 'hover:bg-cbmpa-800 text-white'}`}>
-              <Banknote size={20} /><span>Lançamento</span>
-            </button>
+              {(currentUser?.permissoes || []).includes('PAGAMENTO') && (
+                <button onClick={() => setActiveTab('PAGAMENTO')} className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg transition-all ${activeTab === 'PAGAMENTO' ? 'bg-yellow-500 text-cbmpa-900 font-bold' : 'hover:bg-cbmpa-800 text-white'}`}>
+                  <Banknote size={20} /><span>Lançamento</span>
+                </button>
+              )}
+            </>
           )}
 
           {(currentUser?.permissoes || []).includes('ADMIN') && (
@@ -2673,6 +2751,49 @@ const App: React.FC = () => {
                     </div>
                   ))}
                   {roleRequests.filter((r:any) => r.status === 'PENDING').length === 0 && <p className="text-gray-500 italic">Nenhuma solicitação pendente.</p>}
+                </div>
+
+                <div className="mt-8 border-t pt-6 border-gray-200 dark:border-gray-700">
+                  <h3 className="text-lg font-bold mb-4 font-sans text-cbmpa-900 dark:text-white">Perfis Ativos</h3>
+                  <div className="space-y-4">
+                    {['ESCALANTE', 'APROVADOR', 'PAGAMENTO'].map(roleName => {
+                      const usersWithRole = getActiveAdminUsers().filter((u: any) => (u.permissoes || []).includes(roleName));
+                      return (
+                        <div key={roleName} className="border rounded-lg p-4 bg-white dark:bg-gray-800">
+                          <div className="font-bold text-cbmpa-900 mb-3 flex items-center gap-2">
+                            {roleName === 'ESCALANTE' ? <Plus size={16}/> : roleName === 'APROVADOR' ? <ShieldCheck size={16}/> : <Banknote size={16}/>} 
+                            Perfil: {roleName} ({usersWithRole.length})
+                          </div>
+                          {usersWithRole.length === 0 ? (
+                            <p className="text-sm text-gray-500 italic">Nenhum usuário com este perfil.</p>
+                          ) : (
+                            <div className="space-y-2">
+                              {usersWithRole.map((u: any) => (
+                                <div key={u.matricula} className="flex justify-between items-center text-sm border-b border-gray-100 last:border-0 pb-2 last:pb-0">
+                                  <div>
+                                    <span className="font-bold">{u.nome}</span> <span className="text-gray-500">({u.matricula})</span>
+                                    {roleName === 'ESCALANTE' && u.ubmEscalante && (
+                                      <span className="ml-2 px-1.5 py-0.5 bg-blue-100 dark:bg-blue-900/40 text-blue-800 dark:text-blue-300 text-[10px] font-bold rounded">
+                                        {u.ubmEscalante}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="flex gap-2">
+                                    <button onClick={() => handleRemoveRole(u.matricula, roleName)} className="text-red-500 hover:text-red-700 text-xs px-2 py-1 rounded border border-red-200 hover:bg-red-50 transition-colors">
+                                      Remover Permissão
+                                    </button>
+                                    <button onClick={() => handleDeleteUser(u.matricula)} className="text-orange-600 hover:text-orange-700 text-xs px-2 py-1 rounded border border-orange-200 hover:bg-orange-50 transition-colors">
+                                      Excluir Usuário
+                                    </button>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
               </div>
             )}
