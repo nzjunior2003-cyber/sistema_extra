@@ -1,7 +1,6 @@
 import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";
-import { createServer as createViteServer } from "vite";
 import { Resend } from "resend";
 import dotenv from "dotenv";
 import dns from "dns";
@@ -34,7 +33,7 @@ async function startServer() {
   // Proxy endpoint to send email using Resend
   app.post("/api/send-email", async (req, res) => {
     const { to, subject, html } = req.body;
-    
+
     if (!process.env.RESEND_API_KEY) {
       console.warn("Attempted to send email but RESEND_API_KEY is not configured.");
       console.warn("Email details:", { to, subject, html });
@@ -63,6 +62,11 @@ async function startServer() {
 
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
+    // Import dinâmico: só carrega o pacote 'vite' quando realmente
+    // estamos em desenvolvimento. Isso evita o erro
+    // "Cannot find module 'vite'" em produção, quando o vite
+    // não está instalado no container (é uma devDependency).
+    const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
