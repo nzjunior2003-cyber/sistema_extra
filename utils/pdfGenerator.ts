@@ -86,31 +86,31 @@ const getAbbreviatedRank = (rank: string): string => {
   return `${core} ${cadre}`;
 };
 
-const getUbmOrigemFullName = (ubm: string): string => {
+export const getUbmOrigemFullName = (ubm: string): string => {
   const u = (ubm || '').toUpperCase().trim();
-  if (!u) return 'COMANDO OPERACIONAL';
+  if (!u || u === 'COP') return 'COMANDO OPERACIONAL';
 
   if (u === 'QCG') return 'QUARTEL DO COMANDO GERAL';
   if (u.includes('AJG')) return 'AJUDÂNCIA GERAL DO QCG';
-  if (u.includes('CSMV/MOP') || u.includes('CSMV')) return 'CENTRO DE SUPRIMENTOS E MANUTENÇÃO DE VIATURAS E MATERIAIS OPERACIONAIS';
+  if (u.includes('CSMV/MOP') || u.includes('CSMV')) return 'CENTRO DE SUPRIMENTO E MANUTENÇÃO DE VIATURAS E MATERIAIS OPERACIONAIS';
   if (u === 'CFAE') return 'CENTRO DE FORMAÇÃO, APERFEIÇOAMENTO E ESPECIALIZAÇÃO';
   if (u === 'ABM') return 'ACADEMIA BOMBEIRO MILITAR';
   if (u === 'CAT') return 'CENTRO DE ATIVIDADES TÉCNICAS';
 
   if (u.includes('GBM')) {
-    return u.replace('GBM', 'GRUPAMENTO BOMBEIRO MILITAR');
+    return u.replace('GBM', 'GRUPAMENTO BOMBEIRO MILITAR').trim();
   }
   if (u.includes('GPA')) {
-    return u.replace('GPA', 'GRUPAMENTO DE PROTEÇÃO AMBIENTAL');
+    return u.replace('GPA', 'GRUPAMENTO DE PROTEÇÃO AMBIENTAL').trim();
   }
   if (u.includes('GMAF')) {
-    return u.replace('GMAF', 'GRUPAMENTO MARÍTIMO FLUVIAL');
+    return u.replace('GMAF', 'GRUPAMENTO MARÍTIMO FLUVIAL').trim();
   }
   if (u.includes('GBS')) {
-    return u.replace('GBS', 'GRUPAMENTO DE BUSCA E SALVAMENTO');
+    return u.replace('GBS', 'GRUPAMENTO DE BUSCA E SALVAMENTO').trim();
   }
   if (u.includes('GSE')) {
-    return u.replace('GSE', 'GRUPAMENTO DE SOCORRO E EMERGÊNCIA');
+    return u.replace('GSE', 'GRUPAMENTO DE SOCORRO E EMERGÊNCIA').trim();
   }
 
   return u;
@@ -140,8 +140,8 @@ const addCbmpaHeader = (doc: any, isLandscape = false, fontSizeOverride?: number
   doc.text("CORPO DE BOMBEIROS MILITAR DO PARÁ E", centerX, 14, { align: "center" });
   doc.text("COORDENADORIA ESTADUAL DE DEFESA CIVIL", centerX, 19, { align: "center" });
   
-  const ubmOrigem = state?.formData?.ubmOrigem || '';
-  const ubmText = ubmOrigem ? getUbmOrigemFullName(ubmOrigem) : "COMANDO OPERACIONAL";
+  const ubmOrigem = state?.formData?.ubmOrigem || state?.formData?.issuerUbm || '';
+  const ubmText = getUbmOrigemFullName(ubmOrigem);
   doc.text(ubmText, centerX, 24, { align: "center" });
 };
 
@@ -234,7 +234,7 @@ export const addTraceabilityFooters = (doc: any, isLandscape: boolean, extraData
   const width = isLandscape ? 297 : 210;
   const height = isLandscape ? 210 : 297;
   const centerX = width / 2;
-  const ubmText = (currentUbm || 'COMANDO OPERACIONAL').toUpperCase();
+  const ubmText = getUbmOrigemFullName(currentUbm || 'COP');
 
   for (let i = 1; i <= pageCount; i++) {
     doc.setPage(i);
@@ -242,33 +242,9 @@ export const addTraceabilityFooters = (doc: any, isLandscape: boolean, extraData
     doc.setFontSize(7.5);
     doc.setTextColor(140, 140, 140);
     
-    // Draw from the bottom up to prevent clipping.
-    // Bottom-most is the UBM name, then above it are the signatures.
+    // Draw UBM name centered at footer margin
     let currentY = height - 12;
-    
     doc.text(ubmText, centerX, currentY, { align: 'center' });
-    
-    if (extraData && typeof extraData === 'object') {
-      if (extraData.paymentLaunchLabel) {
-        currentY -= 4;
-        doc.text(`[LANÇAMENTO] ${extraData.paymentLaunchLabel}`.toUpperCase(), centerX, currentY, { align: 'center' });
-      }
-      if (extraData.homologationLabel) {
-        currentY -= 4;
-        doc.text(`[HOMOLOGAÇÃO] ${extraData.homologationLabel}`.toUpperCase(), centerX, currentY, { align: 'center' });
-      }
-      if (extraData.executionApprovalLabel) {
-        currentY -= 4;
-        doc.text(`[RELATÓRIO] ${extraData.executionApprovalLabel}`.toUpperCase(), centerX, currentY, { align: 'center' });
-      }
-      if (extraData.escalaApprovalLabel) {
-        currentY -= 4;
-        doc.text(`[ESCALA] ${extraData.escalaApprovalLabel}`.toUpperCase(), centerX, currentY, { align: 'center' });
-      }
-    } else if (typeof extraData === 'string' && extraData) {
-      currentY -= 4;
-      doc.text(`[ESCALA] ${extraData}`.toUpperCase(), centerX, currentY, { align: 'center' });
-    }
   }
 };
 
@@ -386,6 +362,21 @@ export const generateEscalaOnlyPDF = (state: AppState, returnBlob: boolean = fal
   const signatureLine2 = `Escalante do ${ubmOrigem}`;
   doc.text(signatureLine2, 105, signatureY + 5, { align: 'center' });
 
+  // Registro da escala uns 3cm abaixo do campo de assinatura (somente nome do escalante, data e hora)
+  let labelText = escalaApprovalLabel || (typeof extraData === 'object' && extraData?.escalaApprovalLabel) || (typeof extraData === 'string' && extraData) || '';
+  if (!labelText) {
+    const escNameStr = (escFullName || 'Escalante').toUpperCase();
+    const dateNowStr = new Date().toLocaleDateString('pt-BR') + ', ' + new Date().toLocaleTimeString('pt-BR');
+    labelText = `Escala aprovada por ${escNameStr} - ${getAbbreviatedRank(escRank)} dia ${dateNowStr}`;
+  }
+  if (!labelText.startsWith('[ESCALA]')) {
+    labelText = `[ESCALA] ${labelText}`;
+  }
+  doc.setFont("helvetica", "italic");
+  doc.setFontSize(7.5);
+  doc.setTextColor(0, 0, 0);
+  doc.text(labelText, 105, signatureY + 22, { align: 'center' });
+
   // Footer
   addTraceabilityFooters(doc, false, escalaApprovalLabel, ubmOrigem);
 
@@ -423,7 +414,7 @@ export const generatePDF = (state: AppState, extraData?: any, returnBlob: boolea
     const recipientLine = `Ao Srº ${recipientText}`;
     doc.text(recipientLine, leftMargin, startY);
 
-    const recipientCargoText = (formData.recipientCargo || formData.homologadorFuncao || '').trim();
+    const recipientCargoText = (formData.recipientCargo || formData.homologadorFuncao || '').trim().toUpperCase();
     doc.text(recipientCargoText, leftMargin, startY + 5);
     doc.text("Assunto: Solicitação de Pagamento de Jornada Op. Extraordinária", leftMargin, startY + 15);
     doc.text("Anexo:", leftMargin, startY + 25);
@@ -452,6 +443,21 @@ export const generatePDF = (state: AppState, extraData?: any, returnBlob: boolea
     doc.setFont("helvetica", "normal");
     doc.text("Comandante da Prevenção", 105, sigY + 5, { align: "center" });
     
+    // Registro do memorando uns 3cm abaixo do campo de assinatura
+    let memoLabelText = (extraData && typeof extraData === 'object' && extraData.escalaApprovalLabel) ? extraData.escalaApprovalLabel : '';
+    if (!memoLabelText) {
+      const cmdNameStr = (formData.issuerName || 'Comandante').toUpperCase();
+      const dateNowStr = new Date().toLocaleDateString('pt-BR') + ', ' + new Date().toLocaleTimeString('pt-BR');
+      memoLabelText = `Memorando emitido por ${cmdNameStr} - ${getAbbreviatedRank(formData.issuerRank || '')} dia ${dateNowStr}`;
+    }
+    if (!memoLabelText.startsWith('[MEMORANDO]')) {
+      memoLabelText = `[MEMORANDO] ${memoLabelText}`;
+    }
+    doc.setFont("helvetica", "italic");
+    doc.setFontSize(7.5);
+    doc.setTextColor(0, 0, 0);
+    doc.text(memoLabelText, 105, sigY + 22, { align: "center" });
+
     addTraceabilityFooters(doc, false, extraData, formData.ubmOrigem);
     return returnBlob ? doc.output('blob') : doc.output('bloburl');
   }
@@ -529,11 +535,24 @@ export const generatePDF = (state: AppState, extraData?: any, returnBlob: boolea
         doc.setFontSize(9);
         doc.setFont("helvetica", "bold");
         doc.text("RELAÇÃO DOS BOMBEIROS MILITARES DO SERVIÇO DE COMPLENTAÇÃO DE JORNADA OPERACIONAL LEI Nº 6.830 DE 13 DE FEVEREIRO DE 2006", 148.5, 35, { align: "center", maxWidth: 270 });
-        doc.setFillColor(230, 230, 230);
-        doc.rect(10, 42, 277, 8, 'F');
-        doc.rect(10, 42, 277, 8);
-        doc.text(`${formData.operationName || 'OPERAÇÃO'} - NS Nº ${formData.memoNs || '____'}`, 148.5, 47, { align: "center" });
-        tableStartY = 50;
+        const selectedTypes = new Set(effectiveItems.map(i => i.serviceType).filter(Boolean));
+        if (formData.serviceType) selectedTypes.add(formData.serviceType);
+        const isDiv = selectedTypes.has('DIVERSOS');
+        const isPrev = selectedTypes.has('PREVENCAO') || selectedTypes.size === 0;
+        const isGv = selectedTypes.has('GUARDA_VIDAS');
+        const isCorte = selectedTypes.has('CORTE_VEGETAL');
+        const checkboxesText = `TIPO DE SERVIÇO:   ${isDiv ? '[X]' : '[ ]'} SERVIÇOS DIVERSOS   ${isPrev ? '[X]' : '[ ]'} PREVENÇÃO DESPORTIVA   ${isGv ? '[X]' : '[ ]'} GUARDA VIDAS   ${isCorte ? '[X]' : '[ ]'} CORTE DE VEGETAL`;
+
+        doc.setFillColor(235, 235, 235);
+        doc.rect(10, 42, 277, 10, 'F');
+        doc.rect(10, 42, 277, 10);
+        doc.setFontSize(8);
+        doc.setFont("helvetica", "bold");
+        doc.text(`${formData.operationName || 'OPERAÇÃO'} - NS Nº ${formData.memoNs || '____'}`, 148.5, 46, { align: "center" });
+        doc.setFontSize(7.5);
+        doc.setFont("helvetica", "normal");
+        doc.text(checkboxesText, 148.5, 50, { align: "center" });
+        tableStartY = 54;
       }
 
       if (isLastChunk) {
@@ -592,7 +611,7 @@ export const generatePDF = (state: AppState, extraData?: any, returnBlob: boolea
         if (formData.ubmOrigem) {
            doc.setFont("helvetica", "bold");
            doc.setFontSize(8);
-           doc.text(`UBM DE ORIGEM: ${formData.ubmOrigem}`, 10, finalTableY, { maxWidth: 277 });
+           doc.text(`UBM DE ORIGEM: ${getUbmOrigemFullName(formData.ubmOrigem)}`, 10, finalTableY, { maxWidth: 277 });
            finalTableY += 6; 
         }
 
@@ -645,6 +664,22 @@ export const generatePDF = (state: AppState, extraData?: any, returnBlob: boolea
         drawSignatureWithBoldHighlight(doc, cmtName, resolvedCmtWarName, cmtRank, 148.5, signatureY);
         doc.setFont("helvetica", "normal");
         doc.text("COMANDANTE DA PREVENÇÃO", 148.5, signatureY + 4, { align: "center" });
+
+        // Registro da planilha uns 3cm abaixo do campo de assinatura
+        let planLabelText = (extraData && typeof extraData === 'object' && (extraData.homologationLabel || extraData.escalaApprovalLabel)) 
+          ? (extraData.homologationLabel || extraData.escalaApprovalLabel) : '';
+        if (!planLabelText) {
+          const cmtNameStr = (cmtName || 'Comandante').toUpperCase();
+          const dateNowStr = new Date().toLocaleDateString('pt-BR') + ', ' + new Date().toLocaleTimeString('pt-BR');
+          planLabelText = `Planilha homologada por ${cmtNameStr} - ${getAbbreviatedRank(cmtRank || '')} dia ${dateNowStr}`;
+        }
+        if (!planLabelText.startsWith('[PLANILHA]')) {
+          planLabelText = `[PLANILHA] ${planLabelText}`;
+        }
+        doc.setFont("helvetica", "italic");
+        doc.setFontSize(7.5);
+        doc.setTextColor(0, 0, 0);
+        doc.text(planLabelText, 148.5, signatureY + 22, { align: "center" });
       }
       pageNum++;
     }
@@ -700,7 +735,7 @@ export const generatePDF = (state: AppState, extraData?: any, returnBlob: boolea
     };
 
     currentY = drawSectionHeader("1. DADOS INICIAIS", currentY);
-    currentY = drawGridRow(currentY, 7, [{ width: 190, label: "NOME DO EVENTO:", value: formData.eventName }]);
+    currentY = drawGridRow(currentY, 7, [{ width: 190, label: "NOME DO EVENTO:", value: formData.operationName || formData.eventName || '' }]);
     currentY = drawGridRow(currentY, 7, [
         { width: 140, label: "CMT. DA PREVENÇÃO:", value: `${getAbbreviatedRank(formData.issuerRank || '')} ${formData.issuerName}` },
         { width: 50, label: "UBM:", value: formData.issuerUbm }
@@ -713,28 +748,78 @@ export const generatePDF = (state: AppState, extraData?: any, returnBlob: boolea
     currentY = drawGridRow(currentY, 7, [{ width: 190, label: "HORÁRIO NO EVENTO:", value: `${formData.eventStartTime} AS ${formData.eventEndTime}` }]);
     currentY = drawGridRow(currentY, 7, [
         { width: 95, label: "TOTAL EFETIVO:", value: `${counts.total} BM's` }, 
-        { width: 95, label: "REFERÊNCIA:", value: `NS Nº ${formData.memoNs}` }
+        { width: 95, label: "REFERÊNCIA:", value: `NS Nº ${formData.memoNs || '_____'}` }
     ]);
     currentY = drawGridRow(currentY, 7, [{ width: 190, label: "", value: `Nº FALTAS: (${counts.f}) - Nº PERMUTA: (${counts.pa}) - Nº DISPENSA: (${counts.d}) - Nº ATRASO: (${counts.a})` }]);
     currentY = drawGridRow(currentY, 7, [
         { width: 95, label: "MÉDIA ESTIMADA DE PÚBLICO:", value: formData.eventPublicEstimate },
-        { width: 95, label: "Nº SISCOB:", value: formData.siscobNumber }
+        { width: 95, label: "Nº PPE:", value: formData.siscobNumber }
     ]);
     currentY = drawGridRow(currentY, 7, [{ width: 190, label: "ANEXOS:", value: "ESCALA GERAL/CÓPIA DA NOTA/ ORDEM DE SERVIÇO." }]);
     currentY += 2;
 
-    currentY = drawSectionHeader("2. ALTERAÇÕES NO EFETIVO EMPREGADO - SIM ( ) NÃO ( )", currentY);
+    const hasEffChanges = (formData.reportEffectiveItems || []).some((i: any) => i.status !== 'P' || i.substituteName);
+    currentY = drawSectionHeader(`2. ALTERAÇÕES NO EFETIVO EMPREGADO - SIM (${hasEffChanges ? 'X' : ' '}) NÃO (${!hasEffChanges ? 'X' : ' '})`, currentY);
     doc.autoTable({
       startY: currentY,
       head: [['ORD', 'POST/GRAD', 'NOME GUERRA DO MILITAR', 'UBM', 'MF (OBRIGATÓRIO)', 'P', 'F', 'D', 'P/A', 'A']],
-      body: (formData.reportEffectiveItems || []).map((item, i) => [
-        (i+1).toString(), 
-        item.status === 'P/A' && item.substituteName ? '-' : getAbbreviatedRank(item.soldierRank || ''), 
-        item.status === 'P/A' && item.substituteName ? item.substituteName : item.soldierName, 
-        item.soldierUbm, 
-        item.status === 'P/A' && item.substituteMf ? item.substituteMf : item.soldierMf,
-        item.status === 'P' ? 'X' : '', item.status === 'F' ? 'X' : '', item.status === 'D' ? 'X' : '', item.status === 'P/A' ? 'X' : '', item.status === 'A' ? 'X' : ''
-      ]),
+      body: (formData.reportEffectiveItems || []).map((item, i) => {
+        let rank = getAbbreviatedRank(item.soldierRank || '');
+        let name = item.soldierName || '';
+        let mf = item.soldierMf || item.soldierMatricula || '';
+
+        if (item.status === 'P/A' && item.substituteName) {
+          let subNameRaw = item.substituteName.trim();
+          let subMf = item.substituteMf || item.substituteMatricula || '';
+
+          // Clean out MF if embedded in substituteName string
+          if (!subMf && subNameRaw.includes('MF:')) {
+            const match = subNameRaw.match(/MF:\s*(\d+)/i);
+            if (match) subMf = match[1];
+            subNameRaw = subNameRaw.replace(/\(MF:.*?\)/gi, '').trim();
+          } else if (!subMf && subNameRaw.includes('-')) {
+            const parts = subNameRaw.split('-');
+            if (parts.length > 1 && /^\d+$/.test(parts[1].trim())) {
+              subMf = parts[1].trim();
+              subNameRaw = parts[0].trim();
+            }
+          }
+
+          if (subMf) mf = subMf;
+
+          if (item.substituteRank) {
+            rank = getAbbreviatedRank(item.substituteRank);
+            name = item.substituteWarName || subNameRaw;
+          } else {
+            const words = subNameRaw.split(/\s+/);
+            if (words.length > 1) {
+              const candidateRank = words[0];
+              const maybeRank = getAbbreviatedRank(candidateRank);
+              if (maybeRank && maybeRank !== candidateRank.toUpperCase()) {
+                rank = maybeRank;
+                name = words.slice(1).join(' ');
+              } else {
+                name = subNameRaw;
+              }
+            } else {
+              name = subNameRaw;
+            }
+          }
+        }
+
+        return [
+          (i+1).toString(),
+          rank,
+          name,
+          item.soldierUbm || 'COP',
+          mf,
+          item.status === 'P' ? 'X' : '',
+          item.status === 'F' ? 'X' : '',
+          item.status === 'D' ? 'X' : '',
+          item.status === 'P/A' ? 'X' : '',
+          item.status === 'A' ? 'X' : ''
+        ];
+      }),
       theme: 'grid',
       styles: { fontSize: 7, halign: 'center', lineColor: 0, textColor: 0 },
       headStyles: { fillColor: [220, 220, 220], textColor: 0 },
@@ -745,14 +830,21 @@ export const generatePDF = (state: AppState, extraData?: any, returnBlob: boolea
     doc.text("LEGENDA: P(PRESENÇA) - F(FALTA) - D(DISPENSA) - P/A(PERMUTA/AUTORIZAÇÃO) - A(ATRASO)", 10, currentY + 2);
     currentY += 4;
 
-    currentY = drawSectionHeader("3. ALTERAÇÕES NO SERVIÇO - SIM ( ) NÃO ( )", currentY);
+    const hasSvcChanges = (formData.reportServiceItems || []).some((i: any) => i.name || i.code);
+    currentY = drawSectionHeader(`3. ALTERAÇÕES NO SERVIÇO - SIM (${hasSvcChanges ? 'X' : ' '}) NÃO (${!hasSvcChanges ? 'X' : ' '})`, currentY);
     doc.autoTable({
       startY: currentY,
       head: [['ORD', 'NOME', 'ID', 'SEXO (M)(F)', 'ILS', 'FD', 'FTL', 'CÓDIGO']],
-      body: (formData.reportServiceItems || []).map((item, i) => [
-        (i+1).toString(), item.name, item.age, item.sex,
-        item.condition === 'ILS' ? 'X' : '', item.condition === 'FD' ? 'X' : '', item.condition === 'FTL' ? 'X' : '', item.code
-      ]),
+      body: (formData.reportServiceItems || []).map((item, i) => {
+        const cond = (item.condition || '').toUpperCase().trim();
+        const isIlesa = cond.includes('ILS') || cond.includes('ILESA') || cond === 'I';
+        const isFerida = cond.includes('FD') || cond.includes('FERID') || cond === 'F';
+        const isFatal = cond.includes('FTL') || cond.includes('FATAL') || cond === 'FT';
+        return [
+          (i+1).toString(), item.name, item.age, item.sex,
+          isIlesa ? 'X' : '', isFerida ? 'X' : '', isFatal ? 'X' : '', item.code
+        ];
+      }),
       theme: 'grid',
       styles: { fontSize: 7, halign: 'center', lineColor: 0, textColor: 0 },
       headStyles: { fillColor: [220, 220, 220], textColor: 0 },
@@ -767,7 +859,8 @@ export const generatePDF = (state: AppState, extraData?: any, returnBlob: boolea
 
     if (currentY > 200) { doc.addPage(); currentY = 20; }
 
-    currentY = drawSectionHeader("4. APOIO LOGÍSTICO - SIM ( ) NÃO ( )", currentY);
+    const hasLogChanges = Object.values(formData.reportLogistics || {}).some((v: any) => v?.used) || !!formData.reportOtherLogistics;
+    currentY = drawSectionHeader(`4. APOIO LOGÍSTICO - SIM (${hasLogChanges ? 'X' : ' '}) NÃO (${!hasLogChanges ? 'X' : ' '})`, currentY);
     const allLogItems = [...REPORT_LOGISTICS_ITEMS];
     if (formData.reportOtherLogistics) allLogItems.push('OUTROS: ' + formData.reportOtherLogistics);
     const halfLen = Math.ceil(allLogItems.length / 2);
@@ -803,7 +896,8 @@ export const generatePDF = (state: AppState, extraData?: any, returnBlob: boolea
     currentY += 4;
 
     if (currentY > 230) { doc.addPage(); currentY = 20; }
-    currentY = drawSectionHeader("5. VIATURAS/EMBARCAÇÕES E AERONAVES - SIM ( ) NÃO ( )", currentY);
+    const hasVtrChanges = Object.values(formData.reportVehicles || {}).some((v: any) => v?.used) || !!formData.reportOtherVehicles;
+    currentY = drawSectionHeader(`5. VIATURAS/EMBARCAÇÕES E AERONAVES - SIM (${hasVtrChanges ? 'X' : ' '}) NÃO (${!hasVtrChanges ? 'X' : ' '})`, currentY);
     const allVtrItems = [...REPORT_VEHICLE_ITEMS];
     if (formData.reportOtherVehicles) allVtrItems.push('OUTROS: ' + formData.reportOtherVehicles);
     const halfVtrLen = Math.ceil(allVtrItems.length / 2);
@@ -838,10 +932,9 @@ export const generatePDF = (state: AppState, extraData?: any, returnBlob: boolea
     if (currentY > 230) { doc.addPage(); currentY = 20; }
     currentY = drawSectionHeader("6. CONSIDERAÇÕES DO SERVIÇO", currentY);
     doc.setDrawColor(0);
-    const sec6StartY = currentY; // Guarda a posição inicial para desenhar a borda externa no final
+    const sec6StartY = currentY; 
     doc.setFontSize(8);
     
-    // Função auxiliar para criar as linhas dinâmicas moldando-se ao tamanho do texto
     const drawDynamicFieldRow = (label: string, text: string, textX: number, maxWidth: number, drawLineBelow = true) => {
       doc.setFont("helvetica", "bold");
       doc.text(label, 12, currentY + 5);
@@ -850,12 +943,10 @@ export const generatePDF = (state: AppState, extraData?: any, returnBlob: boolea
       const safeText = text || '';
       const splitText = doc.splitTextToSize(safeText, maxWidth);
       
-      // Renderiza texto justificado
       doc.text(splitText, textX, currentY + 5, { align: "justify", maxWidth: maxWidth });
       
-      // Calcula a altura do bloco baseado na quantidade de linhas (aprox. 4 unidades por linha)
       const blockHeight = Math.max(5, splitText.length * 4);
-      currentY += blockHeight + 3; // +3 de respiro/padding
+      currentY += blockHeight + 3; 
       
       if (drawLineBelow) {
           doc.line(10, currentY, 200, currentY);
@@ -866,7 +957,7 @@ export const generatePDF = (state: AppState, extraData?: any, returnBlob: boolea
     const positiveText = `SIM (${formData.reportPositive.has ? 'X' : ' '}) NÃO (${!formData.reportPositive.has ? 'X' : ' '}) - SE SIM, QUAIS: ${formData.reportPositive.text}`;
     drawDynamicFieldRow("PONTOS POSITIVO:", positiveText, 50, 145, false);
     
-    // 2. PONTOS NEGATIVOS (Desenhamos uma linha simples de separação antes)
+    // 2. PONTOS NEGATIVOS
     const negativeText = `SIM (${formData.reportNegative.has ? 'X' : ' '}) NÃO (${!formData.reportNegative.has ? 'X' : ' '}) - SE SIM, QUAIS: ${formData.reportNegative.text}`;
     drawDynamicFieldRow("PONTOS NEGATIVO:", negativeText, 50, 145, true);
 
@@ -889,25 +980,53 @@ export const generatePDF = (state: AppState, extraData?: any, returnBlob: boolea
     // 6. SUGESTÕES
     drawDynamicFieldRow("SUGESTÕES:", formData.reportSuggestions || '', 40, 155, false);
 
-    // Desenha o quadrado em volta de toda a Seção 6 com a altura total dinâmica calculada
     doc.rect(10, sec6StartY, 190, currentY - sec6StartY);
 
-    currentY += 5; // Margem para a seção 7
+    currentY += 5; 
 
-    // 7. CONSIDERAÇÕES FINAIS
-    if (currentY > 250) { doc.addPage(); currentY = 20; }
-    currentY = drawSectionHeader("7. CONSIDERAÇÕES FINAIS", currentY);
+    // 7. REGISTRO FOTOGRÁFICO
+    if (currentY > 210) { doc.addPage(); currentY = 20; }
+    currentY = drawSectionHeader("7. REGISTRO FOTOGRÁFICO", currentY);
+    const photos = (formData.reportPhotos || []).filter((p: string) => p && p.startsWith('data:image'));
+    if (photos.length > 0) {
+      let photoX = 12;
+      let photoY = currentY + 3;
+      photos.forEach((photo: string, idx: number) => {
+        try {
+          doc.addImage(photo, 'JPEG', photoX, photoY, 85, 60);
+          photoX += 92;
+          if (photoX > 150) {
+            photoX = 12;
+            photoY += 66;
+            if (photoY > 210 && idx < photos.length - 1) {
+              doc.addPage();
+              photoY = 20;
+            }
+          }
+        } catch (e) {
+          console.error("Error adding photo to pdf", e);
+        }
+      });
+      currentY = photoY + 68;
+    } else {
+      doc.setFont("helvetica", "italic");
+      doc.setFontSize(8);
+      doc.text("SEM REGISTROS FOTOGRÁFICOS ANEXADOS.", 12, currentY + 6);
+      currentY += 12;
+    }
+
+    // 8. CONSIDERAÇÕES FINAIS
+    if (currentY > 230) { doc.addPage(); currentY = 20; }
+    currentY = drawSectionHeader("8. CONSIDERAÇÕES FINAIS", currentY);
     
     const finalConsiderations = formData.reportFinalConsiderations || 'NADA A DECLARAR';
     const splitFinal = doc.splitTextToSize(finalConsiderations, 185);
     
-    // Calcula a altura da caixa moldando ao tamanho do texto (mínimo de 25)
     const boxHeight = Math.max(25, (splitFinal.length * 4) + 6);
     doc.rect(10, currentY, 190, boxHeight);
     
     doc.setFont("helvetica", "normal");
     doc.setFontSize(8);
-    // Texto Justificado
     doc.text(splitFinal, 12, currentY + 5, { align: "justify", maxWidth: 185 });
     
     currentY += boxHeight + 5;
@@ -915,33 +1034,8 @@ export const generatePDF = (state: AppState, extraData?: any, returnBlob: boolea
     if (currentY > 230) { doc.addPage(); currentY = 40; }
     doc.setFontSize(9);
     doc.text(`BELÉM – PA, ${dateString}`, 190, currentY, { align: "right" });
-    
-    // -- SISTEMA RASTREABILIDADE LABELS NO REPORT PDF --
-    if (extraData) {
-       doc.setFont("helvetica", "italic");
-       doc.setFontSize(7);
-       let lblY = currentY + 10;
-       
-       if (extraData.escalaApprovalLabel) {
-           doc.text(`[ESCALA] ${extraData.escalaApprovalLabel}`, 10, lblY);
-           lblY += 4;
-       }
-       if (extraData.executionApprovalLabel) {
-           doc.text(`[RELATÓRIO] ${extraData.executionApprovalLabel}`, 10, lblY);
-           lblY += 4;
-       }
-       if (extraData.homologationLabel) {
-           doc.text(`[HOMOLOGAÇÃO] ${extraData.homologationLabel}`, 10, lblY);
-           lblY += 4;
-       }
-       if (extraData.paymentLaunchLabel) {
-           doc.text(`[LANÇAMENTO] ${extraData.paymentLaunchLabel}`, 10, lblY);
-           lblY += 4;
-       }
-    }
-    // ----------------------------------------------------
 
-    currentY += 50; 
+    currentY += 30; 
     const customUsers = JSON.parse(localStorage.getItem('CUSTOM_USERS_DB') || '{}');
     const cmdMat = formData.issuerMatricula;
     const cmdCachedUser = customUsers[cmdMat];
@@ -950,6 +1044,21 @@ export const generatePDF = (state: AppState, extraData?: any, returnBlob: boolea
     drawSignatureWithBoldHighlight(doc, formData.issuerName, cmdWarName, formData.issuerRank, 105, currentY);
     doc.setFont("helvetica", "normal");
     doc.text("CMT DA OPERAÇÃO/EXTRAORDINÁRIA", 105, currentY + 5, { align: "center" });
+
+    // Registro do relatório uns 3cm abaixo do campo de assinatura (nome do comandante, data e hora)
+    let repLabelText = (extraData && typeof extraData === 'object' && extraData.executionApprovalLabel) ? extraData.executionApprovalLabel : '';
+    if (!repLabelText) {
+      const cmtNameStr = (formData.issuerName || 'Comandante').toUpperCase();
+      const dateNowStr = new Date().toLocaleDateString('pt-BR') + ', ' + new Date().toLocaleTimeString('pt-BR');
+      repLabelText = `Relatório atestado por ${cmtNameStr} - ${getAbbreviatedRank(formData.issuerRank || '')} dia ${dateNowStr}`;
+    }
+    if (!repLabelText.startsWith('[RELATÓRIO]')) {
+      repLabelText = `[RELATÓRIO] ${repLabelText}`;
+    }
+    doc.setFont("helvetica", "italic");
+    doc.setFontSize(7.5);
+    doc.setTextColor(0, 0, 0);
+    doc.text(repLabelText, 105, currentY + 22, { align: "center" });
 
     addTraceabilityFooters(doc, false, extraData, formData.ubmOrigem);
     return returnBlob ? doc.output('blob') : doc.output('bloburl');

@@ -1,6 +1,7 @@
 import { getEffectiveCostItems } from "./costHelpers";
 import { AppState, DocumentType, Soldier, CostSheetItem } from '../types';
 import { CBMPA_LOGO_BASE64, DEFESA_CIVIL_LOGO_BASE64 } from './logoBase64';
+import { getUbmOrigemFullName } from "./pdfGenerator";
 
 const { jsPDF } = window.jspdf;
 
@@ -54,7 +55,8 @@ export const generateRelatorioEstatisticoPDF = (escalas: any[], currentUser: any
     serviceTypesCount[sType] = (serviceTypesCount[sType] || 0) + 1;
 
     // Origin UBM
-    const originUbm = e.formData.ubmOrigem || 'Não Informada';
+    const rawUbm = e.formData.ubmOrigem || e.formData.issuerUbm || '';
+    const originUbm = rawUbm ? getUbmOrigemFullName(rawUbm) : 'Não Informada';
     originUbmCount[originUbm] = (originUbmCount[originUbm] || 0) + 1;
 
     // Total cost & soldiers

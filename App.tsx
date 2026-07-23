@@ -4,7 +4,7 @@ import {
   Flame, Sun, Moon, FileText, DollarSign, ClipboardList, 
   Share2, Upload, Wifi, WifiOff, Database, CheckCircle2, 
   User, Search, Plus, X, Star, Trash2, Check, Download,
-  GripVertical, Camera, Eraser, LayoutDashboard, ShieldCheck, Banknote, LogOut, Lock, AlertTriangle, Clock, ExternalLink, Users, UserPlus, History, Eye, EyeOff
+  GripVertical, Camera, Eraser, LayoutDashboard, ShieldCheck, Banknote, LogOut, Lock, AlertTriangle, Clock, ExternalLink, Users, UserPlus, History, UserCheck, ChevronRight
 } from 'lucide-react';
 import { AppState, DocumentType, Soldier, CostSheetItem, ReportEffectiveItem, ReportServiceItem } from './types';
 import { RANKS, UBMS, UNIT_VALUE_DEFAULT, EXTERNAL_DB_URL, REPORT_LOGISTICS_ITEMS, REPORT_VEHICLE_ITEMS, OCCURRENCE_CODES, ROLES, MEMO_LEGAL_TEXT } from './constants';
@@ -129,9 +129,18 @@ const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState('PORTAL'); // PORTAL, ESCALANTE, COMANDANTE, APROVADOR, PAGAMENTO, EDITOR
   const [selectedUbmForRequest, setSelectedUbmForRequest] = useState(UBMS[0]);
   const [editingEscalaId, setEditingEscalaId] = useState<string | null>(null);
+  const getEffectiveCostItems = (formData: any) => {
+    if (!formData) return [];
+    if (Array.isArray(formData.costSheetItems)) {
+      return formData.costSheetItems;
+    }
+    return [];
+  };
   const [loginData, setLoginData] = useState({ matricula: '', senha: '' });
-  const [loginError, setLoginError] = useState('');
   const [showLoginPassword, setShowLoginPassword] = useState(false);
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [loginError, setLoginError] = useState('');
 
   // States para Login Customizado e Recuperação
   const [activeSubstituteId, setActiveSubstituteId] = useState<string | null>(null);
@@ -145,11 +154,10 @@ const App: React.FC = () => {
     const saved = localStorage.getItem('ROLE_REQUESTS');
     return saved ? JSON.parse(saved) : [];
   });
+  const [adminUserSearch, setAdminUserSearch] = useState('');
   const [showFirstAccessModal, setShowFirstAccessModal] = useState(false);
   const [firstAccessUser, setFirstAccessUser] = useState<any>(null);
   const [firstAccessData, setFirstAccessData] = useState({ email: '', novaSenha: '', confirmarSenha: '', nomeGuerra: '' });
-  const [showFirstAccessPassword, setShowFirstAccessPassword] = useState(false);
-  const [showFirstAccessConfirmPassword, setShowFirstAccessConfirmPassword] = useState(false);
 
   const [showForgotModal, setShowForgotModal] = useState(false);
   const [forgotStep, setForgotStep] = useState(1);
@@ -215,32 +223,6 @@ const App: React.FC = () => {
         localStorage.setItem('CUSTOM_USERS_DB', JSON.stringify(nextObj));
         return nextObj;
     });
-  };
-
-  const getActiveAdminUsers = () => {
-    const combined = new Map<string, any>();
-
-    [...MOCK_USERS, ...Object.values(customUsersDict)].forEach((user: any) => {
-      if (!user?.matricula) return;
-      const existing = combined.get(user.matricula) || { matricula: user.matricula, nome: user.nome || user.matricula, posto: user.posto || '', permissoes: [] };
-      combined.set(user.matricula, {
-        ...existing,
-        ...user,
-        permissoes: Array.from(new Set([...(existing.permissoes || []), ...(user.permissoes || [])]))
-      });
-    });
-
-    roleRequests.forEach((req: any) => {
-      if (!req?.matricula) return;
-      const current = combined.get(req.matricula) || { matricula: req.matricula, nome: req.nome || req.matricula, posto: '', permissoes: [] };
-      combined.set(req.matricula, {
-        ...current,
-        nome: current.nome || req.nome || req.matricula,
-        permissoes: current.permissoes || []
-      });
-    });
-
-    return Array.from(combined.values()).filter((user: any) => (user.permissoes || []).length > 0 || user.matricula === 'administrador');
   };
 
   const requestRole = async (role: string, ubm?: string) => {
@@ -333,6 +315,39 @@ const App: React.FC = () => {
   const [homologadorSearchTerm, setHomologadorSearchTerm] = useState('');
   const [showHomologadorSuggestions, setShowHomologadorSuggestions] = useState(false);
   const [homologadorSuggestions, setHomologadorSuggestions] = useState<Soldier[]>([]);
+
+  // Estados para Delegação de Função de Homologação
+  const [delegationSuggestions, setDelegationSuggestions] = useState<Soldier[]>([]);
+
+  // Funções para verificar se a escala pertence ao Homologador/Destinatário ou Delegado
+  const isUserHomologadorForEscala = (escala: any, user: any) => {
+    if (!user) return false;
+    if (user.matricula === 'administrador' || (user.permissoes || []).includes('ADMIN')) return true;
+
+    const reqMat = escala.formData?.recipientMatricula || escala.destinatarioMatricula;
+    const homMat = escala.formData?.homologadorMatricula || escala.homologadorMatricula;
+    const delMat = escala.delegatedMatricula;
+
+    if (reqMat && reqMat === user.matricula) return true;
+    if (homMat && homMat === user.matricula) return true;
+    if (delMat && delMat === user.matricula) return true;
+
+    const userFullName = user.nome ? user.nome.toLowerCase() : '';
+    const recipientText = (escala.formData?.recipient || '').toLowerCase();
+    const homologadorText = (escala.formData?.homologadorNome || '').toLowerCase();
+    const delegatedText = (escala.delegatedNome || '').toLowerCase();
+
+    if (userFullName && userFullName.length > 3) {
+      if (recipientText.includes(userFullName)) return true;
+      if (homologadorText.includes(userFullName)) return true;
+      if (delegatedText.includes(userFullName)) return true;
+    }
+
+    const hasNoAssignedHomologador = !reqMat && !homMat && !delMat && !escala.formData?.recipient && !escala.formData?.homologadorNome;
+    if (hasNoAssignedHomologador && ((user.permissoes || []).includes('APROVADOR') || user.matricula === 'homologador')) return true;
+
+    return false;
+  };
 
   const [costSearchTerm, setCostSearchTerm] = useState('');
   const [showCostSuggestions, setShowCostSuggestions] = useState(false);
@@ -551,6 +566,9 @@ const App: React.FC = () => {
          setCurrentUser(updatedUser);
          saveCustomUser(updatedUser.matricula, updatedUser);
      }
+     if (currentUser && (currentUser.permissoes || []).includes('ADMIN') && activeTab !== 'ADMIN') {
+         setActiveTab('ADMIN');
+     }
   }, [currentUser]);
 
   // Outros effects originais de formatação de datas (MANTIDOS)...
@@ -653,17 +671,23 @@ const App: React.FC = () => {
          return;
      }
 
-     if (window.confirm(`Deseja realmente remover a permissão de ${role} do usuário?`)) {
+     if (window.confirm(`Deseja realmente remover a permissão de ${role} do usuário de matrícula ${matricula}?`)) {
          const currentDict = JSON.parse(localStorage.getItem('CUSTOM_USERS_DB') || '{}');
          let userToUpdate = currentDict[matricula];
+         if (!userToUpdate) {
+             const mock = MOCK_USERS.find(u => u.matricula === matricula);
+             if (mock) {
+                 userToUpdate = { ...mock };
+             }
+         }
          if (userToUpdate) {
              userToUpdate.permissoes = (userToUpdate.permissoes || []).filter((p: string) => p !== role);
              currentDict[matricula] = userToUpdate;
              localStorage.setItem('CUSTOM_USERS_DB', JSON.stringify(currentDict));
-             setCustomUsersDict(currentDict);
+             setCustomUsersDict({ ...currentDict });
 
              if (currentUser && currentUser.matricula === matricula) {
-                 setCurrentUser(userToUpdate);
+                 setCurrentUser({ ...userToUpdate });
              }
          }
      }
@@ -671,25 +695,34 @@ const App: React.FC = () => {
 
   const handleDeleteUser = (matricula: string) => {
      if (matricula === 'administrador') {
-        alert("Não é possível excluir o usuário administrador padrão.");
-        return;
+         alert("Não é possível excluir o usuário administrador padrão.");
+         return;
      }
 
-     if (!window.confirm('Deseja realmente excluir este usuário e remover todos os acessos do sistema?')) {
-        return;
+     if (window.confirm(`Deseja realmente excluir permanentemente o usuário de matrícula ${matricula}? Todos os acessos e cadastros deste usuário serão removidos.`)) {
+         const currentDict = JSON.parse(localStorage.getItem('CUSTOM_USERS_DB') || '{}');
+         delete currentDict[matricula];
+         localStorage.setItem('CUSTOM_USERS_DB', JSON.stringify(currentDict));
+         setCustomUsersDict({ ...currentDict });
+
+         const currentReqs = JSON.parse(localStorage.getItem('ROLE_REQUESTS') || '[]');
+         const newReqs = currentReqs.filter((r: any) => r.matricula !== matricula);
+         localStorage.setItem('ROLE_REQUESTS', JSON.stringify(newReqs));
+         setRoleRequests(newReqs);
+
+         if (currentUser && currentUser.matricula === matricula) {
+             setCurrentUser(null);
+         }
+
+         alert(`Usuário de matrícula ${matricula} foi excluído com sucesso.`);
      }
+  };
 
-     const currentDict = JSON.parse(localStorage.getItem('CUSTOM_USERS_DB') || '{}');
-     delete currentDict[matricula];
-     localStorage.setItem('CUSTOM_USERS_DB', JSON.stringify(currentDict));
-     setCustomUsersDict(currentDict);
-
-     const nextReqs = JSON.parse(localStorage.getItem('ROLE_REQUESTS') || '[]').filter((r: any) => String(r.matricula) !== String(matricula));
-     localStorage.setItem('ROLE_REQUESTS', JSON.stringify(nextReqs));
-     setRoleRequests(nextReqs);
-
-     if (currentUser && currentUser.matricula === matricula) {
-        setCurrentUser(null);
+  const handleClearRequests = () => {
+     if (window.confirm("Deseja realmente limpar todas as solicitações de acesso?")) {
+         localStorage.removeItem('ROLE_REQUESTS');
+         setRoleRequests([]);
+         alert("Todas as solicitações de acesso foram limpas com sucesso.");
      }
   };
 
@@ -776,7 +809,7 @@ const App: React.FC = () => {
          setLoginError('');
       } else {
          setCurrentUser(foundUser);
-         setActiveTab((foundUser?.permissoes || []).includes('ADMIN') ? 'ADMIN' : 'PORTAL');
+         setActiveTab('PORTAL');
          setLoginError('');
       }
     } else {
@@ -807,10 +840,6 @@ const App: React.FC = () => {
         alert("Não foi possível validar o domínio do e-mail no servidor (pode estar offline). Tente novamente mais tarde."); return;
     }
 
-    if (firstAccessData.novaSenha !== firstAccessData.confirmarSenha) {
-       alert("A confirmação de senha não confere."); return;
-    }
-
     const finalUser = { 
       ...firstAccessUser, 
       email: firstAccessData.email, 
@@ -820,7 +849,7 @@ const App: React.FC = () => {
     delete finalUser.isFirstAccess;
     saveCustomUser(finalUser.matricula, finalUser);
     setCurrentUser(finalUser);
-    setActiveTab((finalUser?.permissoes || []).includes('ADMIN') ? 'ADMIN' : 'PORTAL');
+    setActiveTab('PORTAL');
     setShowFirstAccessModal(false);
   };
 
@@ -917,6 +946,7 @@ const App: React.FC = () => {
     setState(prev => ({ ...prev, currentDoc: DocumentType.COST_SHEET, formData: newForm}));
     setIssuerSearchTerm(newForm.issuerName || '');
     setRecipientSearchTerm('');
+    setHomologadorSearchTerm('');
     setCostSearchTerm('');
     setActiveTab('EDITOR'); // Abre o seu formulário original
   };
@@ -959,7 +989,9 @@ const App: React.FC = () => {
 
     setState(prev => ({ ...prev, currentDoc: targetDoc, formData }));
     setIssuerSearchTerm(formData.issuerName || '');
-    setRecipientSearchTerm(formData.recipient || '');
+    const recName = formData.recipient || formData.homologadorNome || '';
+    setRecipientSearchTerm(recName);
+    setHomologadorSearchTerm(recName);
     setActiveTab('EDITOR');
   };
 
@@ -1453,7 +1485,14 @@ const App: React.FC = () => {
      const cmdUser = currentUser;
      const now = new Date();
      const formatter = new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'medium'});
-     const approvalLabel = `homologado por ${cmdUser.nome} - ${cmdUser.posto}, dia ${formatter.format(now)}`;
+     const dateStr = formatter.format(now);
+     
+     let approvalLabel = '';
+     if (currentEscala.delegatedMatricula || currentEscala.delegatedNome) {
+        approvalLabel = `De ordem homologado por ${cmdUser.nome} - ${cmdUser.posto}, dia ${dateStr}`;
+     } else {
+        approvalLabel = `homologado por ${cmdUser.nome} - ${cmdUser.posto}, dia ${dateStr}`;
+     }
      
      const newEscala = {...currentEscala, status: 'homologado', approvalStatusLabel: approvalLabel, homologationLabel: approvalLabel};
      const newEscalas = escalas.map(e => e.id === escalaId ? newEscala : e);
@@ -1575,6 +1614,7 @@ const App: React.FC = () => {
     }
 
     alert(`Todos os militares foram lançados com sucesso!\nRegistro gravado: ${launchedLabelText}`);
+    setPagamentoEscalaId(null);
   };
 
   const saveEscalaWorkflow = async (novoStatus: string, actionMessage: string, stayOnScreen: boolean = false) => {
@@ -1680,7 +1720,7 @@ const App: React.FC = () => {
     if (stayOnScreen) {
       setEditingEscalaId(currentId);
     } else {
-      setActiveTab('PORTAL');
+      setActiveTab((currentUser?.permissoes || []).includes('ESCALANTE') ? 'ESCALANTE' : 'PORTAL');
     }
   };
 
@@ -1749,7 +1789,24 @@ const App: React.FC = () => {
   const handleRecipientSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value;
     setRecipientSearchTerm(val);
+    setHomologadorSearchTerm(val);
     handleInputChange('recipient', val);
+    handleInputChange('homologadorNome', val);
+
+    // Matching in personnel database
+    const match = state.personnelDb.find(s => 
+      s.matricula === val.trim() || 
+      val.toUpperCase().includes(s.nome.toUpperCase())
+    );
+    if (match) {
+      const rank = match.posto ? match.posto.toUpperCase() : '';
+      handleInputChange('recipientMatricula', match.matricula);
+      handleInputChange('homologadorMatricula', match.matricula);
+      handleInputChange('recipientNome', match.nome);
+      handleInputChange('recipientPosto', rank);
+      handleInputChange('homologadorPosto', rank);
+    }
+
     if (val.length >= 2) {
       setRecipientSuggestions(filterSoldiers(val));
       setShowRecipientSuggestions(true);
@@ -1762,13 +1819,41 @@ const App: React.FC = () => {
     const memoRank = s.posto ? s.posto.toUpperCase() : '';
     const formattedRecipient = `${s.nome} - ${memoRank}`;
     setRecipientSearchTerm(formattedRecipient);
+    setHomologadorSearchTerm(formattedRecipient);
     setShowRecipientSuggestions(false);
+    setShowHomologadorSuggestions(false);
+
     handleInputChange('recipient', formattedRecipient);
+    handleInputChange('recipientMatricula', s.matricula);
+    handleInputChange('recipientNome', s.nome);
+    handleInputChange('recipientPosto', memoRank);
+
+    // Auto synchronize homologador fields with the recipient
+    handleInputChange('homologadorNome', formattedRecipient);
+    handleInputChange('homologadorMatricula', s.matricula);
+    handleInputChange('homologadorPosto', memoRank);
   };
 
   const handleHomologadorSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value;
     setHomologadorSearchTerm(val);
+    setRecipientSearchTerm(val);
+    handleInputChange('homologadorNome', val);
+    handleInputChange('recipient', val);
+
+    const match = state.personnelDb.find(s => 
+      s.matricula === val.trim() || 
+      val.toUpperCase().includes(s.nome.toUpperCase())
+    );
+    if (match) {
+      const rank = match.posto ? match.posto.toUpperCase() : '';
+      handleInputChange('homologadorMatricula', match.matricula);
+      handleInputChange('recipientMatricula', match.matricula);
+      handleInputChange('recipientNome', match.nome);
+      handleInputChange('homologadorPosto', rank);
+      handleInputChange('recipientPosto', rank);
+    }
+
     if (val.length >= 2) {
       setHomologadorSuggestions(filterSoldiers(val));
       setShowHomologadorSuggestions(true);
@@ -1781,15 +1866,60 @@ const App: React.FC = () => {
     const memoRank = s.posto ? s.posto.toUpperCase() : '';
     const formattedHomologador = `${s.nome} - ${memoRank}`;
     setHomologadorSearchTerm(formattedHomologador);
+    setRecipientSearchTerm(formattedHomologador);
     setShowHomologadorSuggestions(false);
+    setShowRecipientSuggestions(false);
     
     // Update formData with the detailed soldier data
     handleInputChange('homologadorNome', formattedHomologador);
     handleInputChange('homologadorMatricula', s.matricula);
     handleInputChange('homologadorPosto', memoRank);
 
-    setRecipientSearchTerm(formattedHomologador);
     handleInputChange('recipient', formattedHomologador);
+    handleInputChange('recipientMatricula', s.matricula);
+    handleInputChange('recipientNome', s.nome);
+    handleInputChange('recipientPosto', memoRank);
+  };
+
+  const handleDelegateHomologacaoFunction = (escalaId: string, soldier: Soldier) => {
+    const targetName = `${soldier.posto ? soldier.posto.toUpperCase() + ' ' : ''}${soldier.nome}`;
+    const newEscalas = escalas.map(e => {
+      if (e.id === escalaId) {
+        return {
+          ...e,
+          delegatedMatricula: soldier.matricula,
+          delegatedNome: targetName,
+          delegatedByMatricula: currentUser.matricula,
+          delegatedByNome: `${currentUser.posto || ''} ${currentUser.nome}`.trim(),
+          delegatedAt: new Date().toLocaleDateString('pt-BR')
+        };
+      }
+      return e;
+    });
+    setEscalas(newEscalas);
+    localStorage.setItem(SYSTEM_ESCALAS_KEY, JSON.stringify(newEscalas));
+    setDelegationModal({ isOpen: false, escalaId: null });
+    setDelegationSearch('');
+    setDelegationSuggestions([]);
+    alert(`Função delegada com sucesso para ${targetName}! O militar agora pode homologar este processo.`);
+  };
+
+  const handleRemoveDelegation = (escalaId: string) => {
+    const newEscalas = escalas.map(e => {
+      if (e.id === escalaId) {
+        const updated = { ...e };
+        delete updated.delegatedMatricula;
+        delete updated.delegatedNome;
+        delete updated.delegatedByMatricula;
+        delete updated.delegatedByNome;
+        delete updated.delegatedAt;
+        return updated;
+      }
+      return e;
+    });
+    setEscalas(newEscalas);
+    localStorage.setItem(SYSTEM_ESCALAS_KEY, JSON.stringify(newEscalas));
+    alert('Delegação revogada com sucesso.');
   };
 
   const handleCostSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -2253,10 +2383,7 @@ const App: React.FC = () => {
               <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1">Senha</label>
               <div className="relative">
                 <Lock className="absolute left-3 top-3 text-gray-400" size={18} />
-                <input type={showLoginPassword ? 'text' : 'password'} required className="w-full pl-10 pr-3 py-2 border rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white" value={loginData.senha} onChange={e => setLoginData({...loginData, senha: e.target.value})} />
-                <button type="button" onClick={() => setShowLoginPassword(prev => !prev)} className="absolute right-3 top-2.5 text-gray-500 dark:text-gray-300">
-                  {showLoginPassword ? <EyeOff size={18} /> : <Eye size={18} />}
-                </button>
+                <input type="password" required className="w-full pl-10 pr-3 py-2 border rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white" value={loginData.senha} onChange={e => setLoginData({...loginData, senha: e.target.value})} />
               </div>
             </div>
             
@@ -2285,21 +2412,7 @@ const App: React.FC = () => {
                   </div>
                   <div>
                     <label className="block text-sm font-bold text-gray-700 mb-1">Nova Senha</label>
-                    <div className="relative">
-                      <input type={showFirstAccessPassword ? 'text' : 'password'} required className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600 pr-10" value={firstAccessData.novaSenha} onChange={e => setFirstAccessData({...firstAccessData, novaSenha: e.target.value})} />
-                      <button type="button" onClick={() => setShowFirstAccessPassword(prev => !prev)} className="absolute right-3 top-2.5 text-gray-500">
-                        {showFirstAccessPassword ? <EyeOff size={18} /> : <Eye size={18} />}
-                      </button>
-                    </div>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-bold text-gray-700 mb-1">Confirmar Senha</label>
-                    <div className="relative">
-                      <input type={showFirstAccessConfirmPassword ? 'text' : 'password'} required className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600 pr-10" value={firstAccessData.confirmarSenha} onChange={e => setFirstAccessData({...firstAccessData, confirmarSenha: e.target.value})} />
-                      <button type="button" onClick={() => setShowFirstAccessConfirmPassword(prev => !prev)} className="absolute right-3 top-2.5 text-gray-500">
-                        {showFirstAccessConfirmPassword ? <EyeOff size={18} /> : <Eye size={18} />}
-                      </button>
-                    </div>
+                    <input type="password" required className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600" value={firstAccessData.novaSenha} onChange={e => setFirstAccessData({...firstAccessData, novaSenha: e.target.value})} />
                   </div>
                </div>
                <div className="mt-6 flex justify-end gap-2">
@@ -2373,7 +2486,12 @@ const App: React.FC = () => {
         </div>
 
         <nav className="flex-1 p-4 space-y-2 overflow-y-auto">
-          {!(currentUser?.permissoes || []).includes('ADMIN') && (
+          {(currentUser?.permissoes || []).includes('ADMIN') ? (
+            <button onClick={() => setActiveTab('ADMIN')} className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg transition-all ${activeTab === 'ADMIN' ? 'bg-yellow-500 text-cbmpa-900 font-bold' : 'hover:bg-cbmpa-800 text-white'}`}>
+              <User size={20} /><span>Administração</span>
+              {roleRequests.filter((r:any) => r.status === 'PENDING').length > 0 && <span className="bg-red-500 text-white text-xs px-2 py-0.5 rounded-full ml-auto">{roleRequests.filter((r:any) => r.status === 'PENDING').length}</span>}
+            </button>
+          ) : (
             <>
               <button onClick={() => setActiveTab('PORTAL')} className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg transition-all ${activeTab === 'PORTAL' ? 'bg-yellow-500 text-cbmpa-900 font-bold' : 'hover:bg-cbmpa-800 text-white'}`}>
                 <LayoutDashboard size={20} /><span>Meu Portal</span>
@@ -2385,7 +2503,7 @@ const App: React.FC = () => {
 
               {(currentUser?.permissoes || []).includes('ESCALANTE') && (
                 <button onClick={() => setActiveTab('ESCALANTE')} className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg transition-all ${activeTab === 'ESCALANTE' ? 'bg-yellow-500 text-cbmpa-900 font-bold' : 'hover:bg-cbmpa-800 text-white'}`}>
-                  <Plus size={20} /><span>Criar Escala</span>
+                  <Plus size={20} /><span>Escalas</span>
                 </button>
               )}
 
@@ -2395,9 +2513,12 @@ const App: React.FC = () => {
                 </button>
               )}
 
-              {((currentUser?.permissoes || []).includes('APROVADOR') || escalas.some(e => e.homologadorMatricula === currentUser.matricula && e.status === 'atestado')) && (
+              {((currentUser?.permissoes || []).includes('APROVADOR') || currentUser?.matricula === 'administrador' || escalas.some(e => isUserHomologadorForEscala(e, currentUser))) && (
                 <button onClick={() => setActiveTab('APROVADOR')} className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg transition-all ${activeTab === 'APROVADOR' ? 'bg-yellow-500 text-cbmpa-900 font-bold' : 'hover:bg-cbmpa-800 text-white'}`}>
-                  <ShieldCheck size={20} /><span>Homologação</span>
+                  <ShieldCheck size={20} /><span className="flex-1 text-left">Homologação</span>
+                  {escalas.some(e => e.status === 'atestado' && isUserHomologadorForEscala(e, currentUser)) && (
+                    <span className="bg-red-500 text-white text-xs px-2 py-0.5 rounded-full font-bold">!</span>
+                  )}
                 </button>
               )}
 
@@ -2407,13 +2528,6 @@ const App: React.FC = () => {
                 </button>
               )}
             </>
-          )}
-
-          {(currentUser?.permissoes || []).includes('ADMIN') && (
-            <button onClick={() => setActiveTab('ADMIN')} className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg transition-all ${activeTab === 'ADMIN' ? 'bg-yellow-500 text-cbmpa-900 font-bold' : 'hover:bg-cbmpa-800 text-white'}`}>
-              <User size={20} /><span>Administração</span>
-              {roleRequests.filter((r:any) => r.status === 'PENDING').length > 0 && <span className="bg-red-500 text-white text-xs px-2 py-0.5 rounded-full ml-auto">{roleRequests.filter((r:any) => r.status === 'PENDING').length}</span>}
-            </button>
           )}
         </nav>
         
@@ -2595,47 +2709,7 @@ const App: React.FC = () => {
                 </div>
 
 
-                {/* VISÃO EXCLUSIVA DE ADMIN: LISTA DE USUÁRIOS APROVADOS */}
-                {(currentUser?.permissoes || []).includes('ADMIN') && (
-                  <div className="mt-8 border-t pt-6 border-gray-200 dark:border-gray-700">
-                    <h3 className="text-lg font-bold mb-4 font-sans text-cbmpa-900 dark:text-white">Usuários com Perfis de Acesso</h3>
-                    <div className="space-y-4">
-                       {['ESCALANTE', 'APROVADOR', 'PAGAMENTO'].map(roleName => {
-                           // Find users in customUsersDict who have this role
-                           const usersWithRole = Object.values(customUsersDict).filter((u: any) => (u.permissoes || []).includes(roleName));
-                           return (
-                               <div key={roleName} className="border rounded-lg p-4 bg-white dark:bg-gray-800">
-                                   <div className="font-bold text-cbmpa-900 mb-3 flex items-center gap-2">
-                                     {roleName === 'ESCALANTE' ? <Plus size={16}/> : roleName === 'APROVADOR' ? <ShieldCheck size={16}/> : <Banknote size={16}/>}
-                                     Perfil: {roleName} ({usersWithRole.length})
-                                   </div>
-                                   {usersWithRole.length === 0 ? (
-                                      <p className="text-sm text-gray-500 italic">Nenhum usuário com este perfil.</p>
-                                   ) : (
-                                      <div className="space-y-2">
-                                        {usersWithRole.map((u: any) => (
-                                           <div key={u.matricula} className="flex justify-between items-center text-sm border-b border-gray-100 last:border-0 pb-2 last:pb-0">
-                                              <div>
-                                                <span className="font-bold">{u.nome}</span> <span className="text-gray-500">({u.matricula})</span>
-                                                {roleName === 'ESCALANTE' && u.ubmEscalante && (
-                                                   <span className="ml-2 px-1.5 py-0.5 bg-blue-100 dark:bg-blue-900/40 text-blue-800 dark:text-blue-300 text-[10px] font-bold rounded">
-                                                      {u.ubmEscalante}
-                                                   </span>
-                                                )}
-                                              </div>
-                                              <button onClick={() => handleRemoveRole(u.matricula, roleName)} className="text-red-500 hover:text-red-700 text-xs px-2 py-1 rounded border border-red-200 hover:bg-red-50 transition-colors">
-                                                 Remover Permissão
-                                              </button>
-                                           </div>
-                                        ))}
-                                      </div>
-                                   )}
-                               </div>
-                           );
-                       })}
-                    </div>
-                  </div>
-                )}
+
               </div>
               </>
             )}
@@ -2726,77 +2800,227 @@ const App: React.FC = () => {
               </div>
             )}
 
-            {activeTab === 'ADMIN' && (
-              <div className="bg-white dark:bg-gray-800 p-6 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700">
-                <div className="flex justify-between items-center mb-6">
-                  <h2 className="text-2xl font-bold flex items-center gap-2"><User /> Administração de Usuários</h2>
-                  <button type="button" onClick={(e) => { e.preventDefault(); localStorage.removeItem('ROLE_REQUESTS'); setRoleRequests([]); }} className="text-xs border text-red-600 border-red-600 hover:bg-red-50 px-3 py-1 rounded">Limpar Solicitações</button>
-                </div>
-                
-                <h3 className="text-lg font-bold mb-4 font-sans text-cbmpa-900 dark:text-white">Solicitações de Acesso Pendentes</h3>
-                <div className="space-y-3">
-                  {roleRequests.filter((r:any) => r.status === 'PENDING').map(req => (
-                    <div key={req.id} className="p-4 border rounded-lg flex justify-between items-center bg-gray-50 dark:bg-gray-900/50">
+            {activeTab === 'ADMIN' && (() => {
+              const allRegisteredUsersMap: Record<string, any> = {};
+              MOCK_USERS.forEach(m => { allRegisteredUsersMap[m.matricula] = { ...m }; });
+              Object.keys(customUsersDict).forEach(mat => {
+                allRegisteredUsersMap[mat] = { ...allRegisteredUsersMap[mat], ...customUsersDict[mat] };
+              });
+              const allRegisteredUsers = Object.values(allRegisteredUsersMap);
+              const filteredAllUsers = allRegisteredUsers.filter((u: any) => {
+                if (!adminUserSearch.trim()) return true;
+                const q = adminUserSearch.toLowerCase().trim();
+                return (
+                  (u.nome || '').toLowerCase().includes(q) ||
+                  (u.matricula || '').toLowerCase().includes(q) ||
+                  (u.email || '').toLowerCase().includes(q) ||
+                  (u.posto || '').toLowerCase().includes(q)
+                );
+              });
+
+              return (
+                <div className="space-y-6">
+                  <div className="bg-white dark:bg-gray-800 p-6 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700">
+                    <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6 pb-4 border-b border-gray-200 dark:border-gray-700">
                       <div>
-                        <div className="font-bold">{req.nome || 'Usuário'} (Mat: {req.matricula})</div>
-                        <div className="text-sm text-gray-500">
-                          Solicitou perfil: <span className="font-bold text-cbmpa-700 dark:text-yellow-500">{req.role}</span>
-                          {req.ubm && <> para a UBM: <span className="font-bold text-blue-700 dark:text-blue-400">{req.ubm}</span></>}
-                        </div>
+                        <h2 className="text-2xl font-bold flex items-center gap-2 text-cbmpa-900 dark:text-white">
+                          <User className="text-cbmpa-700 dark:text-yellow-500" /> Administração de Usuários
+                        </h2>
+                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                          Gerenciamento centralizado de solicitações pendentes, perfis de acesso ativos e exclusão de contas.
+                        </p>
                       </div>
-                      <div className="flex gap-2">
-                        <button onClick={() => handleApproveRole(req.id, false)} className="px-3 py-1 border border-red-500 text-red-600 rounded hover:bg-red-50 font-bold text-sm">Recusar</button>
-                        <button onClick={() => handleApproveRole(req.id, true)} className="px-3 py-1 bg-green-600 text-white rounded hover:bg-green-700 font-bold text-sm">Aprovar</button>
+                      <button 
+                        type="button" 
+                        onClick={handleClearRequests} 
+                        className="text-xs border border-red-500 text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30 px-3 py-2 rounded-lg font-bold flex items-center gap-1.5 transition"
+                      >
+                        <Trash2 size={14} /> Limpar Solicitações
+                      </button>
+                    </div>
+
+                    {/* SEÇÃO 1: SOLICITAÇÕES PENDENTES */}
+                    <div className="mb-8">
+                      <h3 className="text-lg font-bold mb-4 font-sans text-cbmpa-900 dark:text-white flex items-center gap-2">
+                        <UserPlus size={18} className="text-yellow-500" /> Solicitações de Acesso Pendentes
+                        {roleRequests.filter((r:any) => r.status === 'PENDING').length > 0 && (
+                          <span className="bg-red-500 text-white text-xs px-2 py-0.5 rounded-full font-bold">
+                            {roleRequests.filter((r:any) => r.status === 'PENDING').length}
+                          </span>
+                        )}
+                      </h3>
+                      <div className="space-y-3">
+                        {roleRequests.filter((r:any) => r.status === 'PENDING').map(req => (
+                          <div key={req.id} className="p-4 border rounded-xl flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-gray-50 dark:bg-gray-900/50 border-gray-200 dark:border-gray-700">
+                            <div>
+                              <div className="font-bold text-gray-900 dark:text-white">{req.nome || 'Usuário'} (Mat: {req.matricula})</div>
+                              <div className="text-sm text-gray-600 dark:text-gray-400 mt-0.5">
+                                Solicitou perfil: <span className="font-bold text-cbmpa-700 dark:text-yellow-500">{req.role}</span>
+                                {req.ubm && <> para a UBM: <span className="font-bold text-blue-700 dark:text-blue-400">{req.ubm}</span></>}
+                              </div>
+                            </div>
+                            <div className="flex gap-2 w-full sm:w-auto justify-end">
+                              <button onClick={() => handleApproveRole(req.id, false)} className="px-3 py-1.5 border border-red-500 text-red-600 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/30 font-bold text-xs transition">Recusar</button>
+                              <button onClick={() => handleApproveRole(req.id, true)} className="px-3 py-1.5 bg-green-600 text-white rounded-lg hover:bg-green-700 font-bold text-xs transition">Aprovar</button>
+                            </div>
+                          </div>
+                        ))}
+                        {roleRequests.filter((r:any) => r.status === 'PENDING').length === 0 && (
+                          <div className="p-4 border rounded-xl bg-gray-50 dark:bg-gray-900/30 text-gray-500 italic text-sm text-center">
+                            Nenhuma solicitação pendente no momento.
+                          </div>
+                        )}
                       </div>
                     </div>
-                  ))}
-                  {roleRequests.filter((r:any) => r.status === 'PENDING').length === 0 && <p className="text-gray-500 italic">Nenhuma solicitação pendente.</p>}
-                </div>
 
-                <div className="mt-8 border-t pt-6 border-gray-200 dark:border-gray-700">
-                  <h3 className="text-lg font-bold mb-4 font-sans text-cbmpa-900 dark:text-white">Perfis Ativos</h3>
-                  <div className="space-y-4">
-                    {['ESCALANTE', 'APROVADOR', 'PAGAMENTO'].map(roleName => {
-                      const usersWithRole = getActiveAdminUsers().filter((u: any) => (u.permissoes || []).includes(roleName));
-                      return (
-                        <div key={roleName} className="border rounded-lg p-4 bg-white dark:bg-gray-800">
-                          <div className="font-bold text-cbmpa-900 mb-3 flex items-center gap-2">
-                            {roleName === 'ESCALANTE' ? <Plus size={16}/> : roleName === 'APROVADOR' ? <ShieldCheck size={16}/> : <Banknote size={16}/>} 
-                            Perfil: {roleName} ({usersWithRole.length})
-                          </div>
-                          {usersWithRole.length === 0 ? (
-                            <p className="text-sm text-gray-500 italic">Nenhum usuário com este perfil.</p>
-                          ) : (
-                            <div className="space-y-2">
-                              {usersWithRole.map((u: any) => (
-                                <div key={u.matricula} className="flex justify-between items-center text-sm border-b border-gray-100 last:border-0 pb-2 last:pb-0">
-                                  <div>
-                                    <span className="font-bold">{u.nome}</span> <span className="text-gray-500">({u.matricula})</span>
-                                    {roleName === 'ESCALANTE' && u.ubmEscalante && (
-                                      <span className="ml-2 px-1.5 py-0.5 bg-blue-100 dark:bg-blue-900/40 text-blue-800 dark:text-blue-300 text-[10px] font-bold rounded">
-                                        {u.ubmEscalante}
-                                      </span>
-                                    )}
-                                  </div>
-                                  <div className="flex gap-2">
-                                    <button onClick={() => handleRemoveRole(u.matricula, roleName)} className="text-red-500 hover:text-red-700 text-xs px-2 py-1 rounded border border-red-200 hover:bg-red-50 transition-colors">
-                                      Remover Permissão
-                                    </button>
-                                    <button onClick={() => handleDeleteUser(u.matricula)} className="text-orange-600 hover:text-orange-700 text-xs px-2 py-1 rounded border border-orange-200 hover:bg-orange-50 transition-colors">
-                                      Excluir Usuário
-                                    </button>
-                                  </div>
+                    {/* SEÇÃO 2: PERFIS DE ACESSO ATIVOS */}
+                    <div className="mb-8 border-t pt-6 border-gray-200 dark:border-gray-700">
+                      <h3 className="text-lg font-bold mb-4 font-sans text-cbmpa-900 dark:text-white flex items-center gap-2">
+                        <ShieldCheck size={18} className="text-green-600" /> Perfis de Acesso Ativos
+                      </h3>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        {['ESCALANTE', 'APROVADOR', 'PAGAMENTO'].map(roleName => {
+                          const usersWithRole = allRegisteredUsers.filter((u: any) => (u.permissoes || []).includes(roleName));
+                          return (
+                            <div key={roleName} className="border rounded-xl p-4 bg-gray-50/50 dark:bg-gray-900/40 border-gray-200 dark:border-gray-700 flex flex-col justify-between">
+                              <div>
+                                <div className="font-bold text-cbmpa-900 dark:text-yellow-400 mb-3 flex items-center gap-2 pb-2 border-b border-gray-200 dark:border-gray-700">
+                                  {roleName === 'ESCALANTE' ? <Plus size={16}/> : roleName === 'APROVADOR' ? <ShieldCheck size={16}/> : <Banknote size={16}/>}
+                                  Perfil: {roleName} ({usersWithRole.length})
                                 </div>
-                              ))}
+                                {usersWithRole.length === 0 ? (
+                                  <p className="text-xs text-gray-500 italic py-2">Nenhum usuário com este perfil.</p>
+                                ) : (
+                                  <div className="space-y-3">
+                                    {usersWithRole.map((u: any) => (
+                                      <div key={u.matricula} className="flex flex-col gap-2 p-2.5 rounded-lg bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-750 text-xs">
+                                        <div className="flex justify-between items-start">
+                                          <div>
+                                            <span className="font-bold text-gray-900 dark:text-white">{u.nome || u.matricula}</span>
+                                            <div className="text-gray-500 text-[11px]">Matrícula: {u.matricula}</div>
+                                            {roleName === 'ESCALANTE' && u.ubmEscalante && (
+                                              <span className="inline-block mt-1 px-1.5 py-0.5 bg-blue-100 dark:bg-blue-900/40 text-blue-800 dark:text-blue-300 text-[10px] font-bold rounded">
+                                                {u.ubmEscalante}
+                                              </span>
+                                            )}
+                                          </div>
+                                        </div>
+                                        <div className="flex gap-2 pt-2 border-t border-gray-100 dark:border-gray-700">
+                                          <button 
+                                            onClick={() => handleRemoveRole(u.matricula, roleName)} 
+                                            className="flex-1 py-1 px-2 text-[11px] text-red-600 hover:text-red-700 border border-red-200 hover:bg-red-50 dark:border-red-900/50 dark:hover:bg-red-950/40 rounded-md font-bold transition text-center"
+                                            title="Remover acesso a este perfil"
+                                          >
+                                            Remover Acesso
+                                          </button>
+                                          {u.matricula !== 'administrador' && (
+                                            <button 
+                                              onClick={() => handleDeleteUser(u.matricula)} 
+                                              className="py-1 px-2 text-[11px] text-white bg-red-600 hover:bg-red-700 rounded-md font-bold transition text-center"
+                                              title="Excluir o usuário completamente"
+                                            >
+                                              Excluir Usuário
+                                            </button>
+                                          )}
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
                             </div>
-                          )}
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* SEÇÃO 3: TODOS OS USUÁRIOS CADASTRADOS */}
+                    <div className="border-t pt-6 border-gray-200 dark:border-gray-700">
+                      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-4">
+                        <h3 className="text-lg font-bold font-sans text-cbmpa-900 dark:text-white flex items-center gap-2">
+                          <Users size={18} className="text-blue-600" /> Todos os Usuários Cadastrados ({allRegisteredUsers.length})
+                        </h3>
+                        <div className="relative w-full sm:w-64">
+                          <Search className="absolute left-3 top-2.5 text-gray-400" size={16} />
+                          <input 
+                            type="text" 
+                            placeholder="Pesquisar por nome ou matrícula..." 
+                            value={adminUserSearch}
+                            onChange={(e) => setAdminUserSearch(e.target.value)}
+                            className="w-full pl-9 pr-3 py-1.5 text-xs border rounded-lg bg-gray-50 dark:bg-gray-900 border-gray-200 dark:border-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-cbmpa-700"
+                          />
                         </div>
-                      );
-                    })}
+                      </div>
+
+                      <div className="overflow-x-auto rounded-xl border border-gray-200 dark:border-gray-700">
+                        <table className="w-full text-left text-xs text-gray-700 dark:text-gray-300">
+                          <thead className="bg-gray-100 dark:bg-gray-900 text-gray-800 dark:text-gray-200 font-bold uppercase text-[10px]">
+                            <tr>
+                              <th className="p-3">Usuário / Matrícula</th>
+                              <th className="p-3">Posto / E-mail</th>
+                              <th className="p-3">Perfis / Permissões</th>
+                              <th className="p-3 text-right">Ações</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-gray-200 dark:divide-gray-700 bg-white dark:bg-gray-800">
+                            {filteredAllUsers.map((u: any) => {
+                              const permissoes = u.permissoes || [];
+                              return (
+                                <tr key={u.matricula} className="hover:bg-gray-50 dark:hover:bg-gray-750 transition">
+                                  <td className="p-3">
+                                    <div className="font-bold text-gray-900 dark:text-white">{u.nome || 'Sem Nome'}</div>
+                                    <div className="text-gray-500 text-[11px]">Matrícula: <span className="font-mono">{u.matricula}</span></div>
+                                  </td>
+                                  <td className="p-3">
+                                    <div>{u.posto || 'Não informado'}</div>
+                                    <div className="text-gray-400 text-[11px]">{u.email || 'Sem e-mail'}</div>
+                                  </td>
+                                  <td className="p-3">
+                                    {permissoes.length > 0 ? (
+                                      <div className="flex flex-wrap gap-1">
+                                        {permissoes.map((p: string) => (
+                                          <span key={p} className="px-2 py-0.5 bg-yellow-100 dark:bg-yellow-900/40 text-yellow-800 dark:text-yellow-300 rounded font-bold text-[10px]">
+                                            {p}
+                                          </span>
+                                        ))}
+                                      </div>
+                                    ) : (
+                                      <span className="text-gray-400 italic text-[11px]">Sem perfis especiais</span>
+                                    )}
+                                  </td>
+                                  <td className="p-3 text-right">
+                                    <div className="flex justify-end gap-2">
+                                      {u.matricula !== 'administrador' ? (
+                                        <button 
+                                          onClick={() => handleDeleteUser(u.matricula)}
+                                          className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-lg font-bold text-xs transition flex items-center gap-1"
+                                          title="Excluir este usuário do sistema"
+                                        >
+                                          <Trash2 size={13} /> Excluir Usuário
+                                        </button>
+                                      ) : (
+                                        <span className="text-[10px] text-gray-400 italic px-2 py-1">Conta Administrador Padrão</span>
+                                      )}
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                            {filteredAllUsers.length === 0 && (
+                              <tr>
+                                <td colSpan={4} className="p-4 text-center text-gray-500 italic">
+                                  Nenhum usuário encontrado na busca.
+                                </td>
+                              </tr>
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
                   </div>
                 </div>
-              </div>
-            )}
+              );
+            })()}
 
             {activeTab === 'ESCALANTE' && (
               <div className="bg-white dark:bg-gray-800 p-6 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700">
@@ -3333,7 +3557,7 @@ const App: React.FC = () => {
 
                           const allHomologadorEscalas = escalas.filter(e => 
                              ['atestado', 'homologado', 'lancado', 'devolvido', 'esclarecimento_solicitado'].includes(e.status) &&
-                             (!e.homologadorMatricula || e.homologadorMatricula === currentUser.matricula)
+                             isUserHomologadorForEscala(e, currentUser)
                           ).filter(applyHomologadorFilters);
 
                           const filtersObj = {
@@ -3419,11 +3643,11 @@ const App: React.FC = () => {
                       return true;
                     };
 
-                    const pendingList = escalas.filter(e => e.status === 'atestado' && (!e.homologadorMatricula || e.homologadorMatricula === currentUser.matricula) && applyFilters(e));
+                    const pendingList = escalas.filter(e => e.status === 'atestado' && isUserHomologadorForEscala(e, currentUser) && applyFilters(e));
                     
                     const allHomologadorEscalas = escalas.filter(e => 
                        ['atestado', 'homologado', 'lancado', 'devolvido', 'esclarecimento_solicitado'].includes(e.status) &&
-                       (!e.homologadorMatricula || e.homologadorMatricula === currentUser.matricula)
+                       isUserHomologadorForEscala(e, currentUser)
                     ).filter(applyFilters);
 
                     return (
@@ -3440,20 +3664,112 @@ const App: React.FC = () => {
                           ) : (
                             pendingList.map(escala => (
                       <div key={escala.id} className="p-4 border rounded-xl flex flex-col md:flex-row justify-between md:items-center bg-gray-50 dark:bg-gray-900/50 gap-4 transition hover:shadow-sm">
-                        <div>
+                        <div className="flex-1">
                           <div className="font-bold text-lg text-cbmpa-900 dark:text-yellow-500">{escala.formData.operationName || escala.formData.eventName}</div>
                           <div className="text-sm text-gray-500 flex flex-wrap gap-x-4 gap-y-1 mt-1">
                             <span><strong>Cmt:</strong> {escala.formData.issuerName}</span>
                             <span><strong>Data:</strong> {formatAnyDate(escala.formData.eventDate)}</span>
+                            {escala.formData.recipient && <span><strong>Destinatário:</strong> {escala.formData.recipient}</span>}
                           </div>
+                          {escala.delegatedNome && (
+                            <div className="mt-2 text-xs text-purple-800 dark:text-purple-300 bg-purple-50 dark:bg-purple-950/50 border border-purple-200 dark:border-purple-800 rounded px-2.5 py-1 inline-flex items-center gap-1.5 font-medium">
+                              <UserCheck size={14} className="shrink-0 text-purple-600" />
+                              <span>Delegado para: <strong>{escala.delegatedNome}</strong> ({escala.delegatedAt || 'ativo'})</span>
+                              <button 
+                                onClick={(ev) => {
+                                  ev.stopPropagation();
+                                  handleRemoveDelegation(escala.id);
+                                }} 
+                                className="ml-2 text-red-600 dark:text-red-400 hover:underline font-bold text-[11px]"
+                              >
+                                Revogar
+                              </button>
+                            </div>
+                          )}
                         </div>
-                        <button onClick={() => handleViewPdf(escala)} className="bg-cbmpa-700 text-white px-6 py-2.5 rounded-lg font-bold hover:bg-cbmpa-800 transition shadow-sm text-sm whitespace-nowrap self-end md:self-auto">
-                          Analisar Processo em PDF
-                        </button>
+                        <div className="flex flex-wrap items-center gap-2 self-end md:self-auto">
+                          <button 
+                            onClick={() => setDelegationModal({ isOpen: true, escalaId: escala.id })} 
+                            className="bg-purple-600 text-white px-4 py-2.5 rounded-lg font-bold hover:bg-purple-700 transition shadow-sm text-xs flex items-center gap-1.5"
+                          >
+                            <UserCheck size={15} />
+                            <span>{escala.delegatedNome ? 'Alterar Delegação' : 'Delegar Função'}</span>
+                          </button>
+                          <button onClick={() => handleViewPdf(escala)} className="bg-cbmpa-700 text-white px-5 py-2.5 rounded-lg font-bold hover:bg-cbmpa-800 transition shadow-sm text-xs whitespace-nowrap">
+                            Analisar Processo em PDF
+                          </button>
+                        </div>
                       </div>
                             ))
                           )}
                         </div>
+
+                        {/* Modal de Delegação de Função */}
+                        {delegationModal.isOpen && (
+                          <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
+                            <div className="bg-white dark:bg-gray-800 rounded-xl max-w-md w-full p-6 shadow-2xl border dark:border-gray-700 space-y-4">
+                              <div className="flex justify-between items-center border-b pb-3 dark:border-gray-700">
+                                <h3 className="font-bold text-lg text-cbmpa-900 dark:text-yellow-500 flex items-center gap-2">
+                                  <UserCheck size={20} className="text-purple-600" />
+                                  <span>Delegar Função de Homologação</span>
+                                </h3>
+                                <button onClick={() => setDelegationModal({ isOpen: false, escalaId: null })} className="text-gray-400 hover:text-gray-600">
+                                  <X size={20} />
+                                </button>
+                              </div>
+
+                              <p className="text-sm text-gray-600 dark:text-gray-300">
+                                Selecione o militar que receberá autorização para analisar e aprovar a execução deste serviço em seu nome.
+                              </p>
+
+                              <div className="relative space-y-2">
+                                <label className="block text-xs font-bold text-gray-700 dark:text-gray-300">BUSCAR MILITAR</label>
+                                <input 
+                                  type="text" 
+                                  className="w-full p-2.5 border rounded-lg dark:bg-gray-700 dark:border-gray-600 dark:text-white text-sm" 
+                                  placeholder="Matrícula ou Nome do militar..." 
+                                  value={delegationSearch} 
+                                  onChange={(e) => {
+                                    const val = e.target.value;
+                                    setDelegationSearch(val);
+                                    if (val.length >= 2) {
+                                      setDelegationSuggestions(filterSoldiers(val));
+                                    } else {
+                                      setDelegationSuggestions([]);
+                                    }
+                                  }} 
+                                />
+
+                                {delegationSuggestions.length > 0 && (
+                                  <ul className="bg-white dark:bg-gray-800 border rounded-lg shadow-lg max-h-48 overflow-auto text-sm divide-y dark:divide-gray-700">
+                                    {delegationSuggestions.map(s => (
+                                      <li 
+                                        key={s.matricula} 
+                                        onClick={() => handleDelegateHomologacaoFunction(delegationModal.escalaId!, s)} 
+                                        className="p-2.5 hover:bg-purple-50 dark:hover:bg-gray-700 cursor-pointer flex justify-between items-center"
+                                      >
+                                        <div>
+                                          <div className="font-bold text-cbmpa-900 dark:text-gray-200">{s.posto ? s.posto.toUpperCase() + ' ' : ''}{s.nome}</div>
+                                          <div className="text-xs text-gray-500">Matrícula: {s.matricula} • UBM: {s.ubm || 'CBMPA'}</div>
+                                        </div>
+                                        <ChevronRight size={16} className="text-purple-600" />
+                                      </li>
+                                    ))}
+                                  </ul>
+                                )}
+                              </div>
+
+                              <div className="flex justify-end gap-2 pt-2 border-t dark:border-gray-700">
+                                <button 
+                                  onClick={() => setDelegationModal({ isOpen: false, escalaId: null })} 
+                                  className="px-4 py-2 border rounded-lg text-sm font-semibold hover:bg-gray-100 dark:hover:bg-gray-700"
+                                >
+                                  Cancelar
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        )}
                       </>
                     );
                   })()}
@@ -3510,7 +3826,7 @@ const App: React.FC = () => {
                       return true;
                     };
 
-                    const historyList = escalas.filter(e => ['homologado', 'lancado', 'devolvido', 'esclarecimento_solicitado'].includes(e.status) && applyFilters(e));
+                    const historyList = escalas.filter(e => ['homologado', 'lancado', 'devolvido', 'esclarecimento_solicitado'].includes(e.status) && isUserHomologadorForEscala(e, currentUser) && applyFilters(e));
                     
                     if (historyList.length === 0) {
                       return <p className="text-gray-500 italic text-sm">Nenhuma homologação anterior encontrada para os filtros aplicados.</p>;
@@ -4083,16 +4399,10 @@ const App: React.FC = () => {
                                                <h3 className="font-bold text-lg text-cbmpa-900 dark:text-yellow-500">{esc.formData.operationName || esc.formData.eventName}</h3>
                                            </div>
                                            <div className="flex gap-2">
-                                               <button onClick={() => setPagamentoEscalaId(null)} className="px-4 py-2 border rounded font-bold hover:bg-gray-50 bg-white dark:bg-gray-750 dark:border-gray-600 dark:text-white">Voltar</button>
-                                               {esc.status === 'lancado' ? (
-                                                   <span className="bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300 px-3 py-2 rounded font-bold text-xs uppercase border border-green-200">
-                                                      Lançado ({esc.launchedByName || 'Sistema'}) em {esc.launchedAt || 'N/A'}
-                                                   </span>
-                                                ) : (
-                                                   <button onClick={() => handleLaunchAllForPayment(pagamentoEscalaId)} className="bg-green-600 text-white px-4 py-2 rounded font-bold hover:bg-green-700 text-xs shadow-sm transition">
-                                                      Concluir Todas / Lançar Todas
-                                                   </button>
-                                                )}
+                                               <button onClick={() => setPagamentoEscalaId(null)} className="px-4 py-2 border rounded font-bold hover:bg-gray-50 bg-white dark:bg-gray-750 dark:border-gray-600 dark:text-white text-xs">Voltar para Lotes</button>
+                                               <button onClick={() => handleLaunchAllForPayment(pagamentoEscalaId!)} className="bg-green-600 text-white px-4 py-2 rounded font-bold hover:bg-green-700 text-xs shadow-sm transition flex items-center gap-1">
+                                                  <Check size={16} /> Concluir Lançamento
+                                               </button>
                                            </div>
                                        </div>
                                        <div>
@@ -4187,23 +4497,45 @@ const App: React.FC = () => {
                    </div>
                 ) : (
                    <div className="space-y-3">
-                     {escalas.filter(e => e.status === 'homologado' || e.status === 'lancado').map(escala => (
-                       <div key={escala.id} className={`p-4 border rounded-lg flex justify-between items-center ${escala.status === 'lancado' ? 'border-gray-200 bg-gray-50 opacity-70' : 'border-green-200 bg-green-50 dark:bg-green-900/20'}`}>
-                         <div>
-                           <div className="font-bold flex items-center gap-2">
-                               {escala.formData.operationName}
-                               {escala.status === 'lancado' && <span className="bg-gray-200 text-gray-700 px-2 py-0.5 text-[10px] rounded uppercase">Arquivado</span>}
-                           </div>
-                           <div className="text-sm text-gray-500 flex gap-4">
-                               <span>Planilha Consolidada ({escala.formData.costSheetItems.length} militares)</span>
-                               <span>Lançados: {escala.formData.costSheetItems.filter((i:any) => i.isLaunched).length} / {escala.formData.costSheetItems.length}</span>
+                     {escalas.filter(e => e.status === 'homologado' || e.status === 'lancado').map(escala => {
+                        const isAllLaunched = escala.status === 'lancado' || (escala.formData.costSheetItems?.length > 0 && escala.formData.costSheetItems.every((i: any) => i.isLaunched));
+                        return (
+                          <div key={escala.id} className={`p-4 border rounded-lg flex justify-between items-center ${isAllLaunched ? 'border-green-300 bg-green-50/60 dark:bg-green-950/20' : 'border-amber-200 bg-amber-50/50 dark:bg-amber-950/20'}`}>
+                            <div>
+                              <div className="font-bold flex items-center gap-2 text-gray-900 dark:text-gray-100">
+                                  {escala.formData.operationName}
+                                  {isAllLaunched && (
+                                    <span className="bg-green-100 text-green-800 text-[10px] font-bold px-2 py-0.5 rounded uppercase border border-green-300 flex items-center gap-1">
+                                      <Check size={12} className="text-green-700" /> Lançado em Folha
+                                    </span>
+                                  )}
+                              </div>
+                              <div className="text-sm text-gray-500 flex gap-4 mt-1">
+                                  <span>Planilha Consolidada ({escala.formData.costSheetItems.length} militares)</span>
+                                  <span>Lançados: {escala.formData.costSheetItems.filter((i:any) => i.isLaunched).length} / {escala.formData.costSheetItems.length}</span>
+                               </div>
+                            </div>
+                            <div className="flex gap-2">
+                              <button 
+                                onClick={() => setPagamentoEscalaId(escala.id)} 
+                                className={isAllLaunched 
+                                  ? "bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded font-bold flex items-center gap-1.5 text-xs transition shadow-sm" 
+                                  : "bg-yellow-500 hover:bg-yellow-400 text-cbmpa-900 px-4 py-2 rounded font-bold text-xs transition shadow-sm"
+                                }
+                              >
+                                {isAllLaunched ? (
+                                  <>
+                                    <Check size={16} className="text-white" />
+                                    <span>✓ Lançado em Folha</span>
+                                  </>
+                                ) : (
+                                  <span>Selecionar Lote</span>
+                                )}
+                              </button>
                             </div>
                           </div>
-                          <div className="flex gap-2">
-                            <button onClick={() => setPagamentoEscalaId(escala.id)} className="bg-yellow-500 text-cbmpa-900 px-4 py-2 rounded font-bold hover:bg-yellow-400">Selecionar Lote</button>
-                          </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                       
                       {escalas.filter(e => e.status === "homologado" || e.status === "lancado").length === 0 && (
                         <div className="text-gray-500 text-center py-8">Nenhum lote pronto para pagamento no momento.</div>
@@ -4236,36 +4568,29 @@ const App: React.FC = () => {
               </div>
             )}
 
-            {/* Barra de Abas do Documento */}
-            {currentUser?.permissoes?.includes('ESCALANTE') && (
+            {/* Barra de Consultas/Anexos (Sem abas extras para o Escalante) */}
+            {currentUser?.permissoes?.includes('ESCALANTE') && editingEscalaId && escalas.find(e => e.id === editingEscalaId) && (
               <div className="max-w-7xl mx-auto flex flex-col gap-2 mb-4">
-                  <div className="flex gap-2 bg-white dark:bg-gray-800 p-2 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700">
-                       <button onClick={() => setState(prev => ({...prev, currentDoc: DocumentType.MEMO}))} className={`flex-1 py-2 rounded font-bold text-sm ${state.currentDoc === DocumentType.MEMO ? 'bg-yellow-500 text-cbmpa-900' : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700'}`}>1. Ofício/Memorando</button>
-                       <button onClick={() => setState(prev => ({...prev, currentDoc: DocumentType.COST_SHEET}))} className={`flex-1 py-2 rounded font-bold text-sm ${state.currentDoc === DocumentType.COST_SHEET ? 'bg-yellow-500 text-cbmpa-900' : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700'}`}>2. Escala de Serviço</button>
-                       <button onClick={() => setState(prev => ({...prev, currentDoc: DocumentType.REPORT}))} className={`flex-1 py-2 rounded font-bold text-sm ${state.currentDoc === DocumentType.REPORT ? 'bg-yellow-500 text-cbmpa-900' : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700'}`}>3. Relatório Comandante</button>
+                  <div className="flex items-center gap-2 px-2 bg-white dark:bg-gray-800 p-2 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700">
+                      <span className="text-xs font-bold text-gray-500 uppercase">Consultas: </span>
+                      <button onClick={() => {
+                          window.open(generateEscalaOnlyPDF(state, false, currentUser, escalas.find(e => e.id === editingEscalaId)?.escalaApprovalLabel) as string, '_blank');
+                      }} className="text-xs font-bold text-blue-600 hover:underline">Escala Aprovada (PDF)</button>
+                      
+                      {escalas.find(e => e.id === editingEscalaId)?.formData.nsAttachment && (
+                          <>
+                            <span className="text-gray-300">|</span>
+                            <a href={escalas.find(e => e.id === editingEscalaId)?.formData.nsAttachment} target="_blank" rel="noreferrer" className="text-xs font-bold text-blue-600 hover:underline">Nota de Serviço (NS)</a>
+                          </>
+                      )}
+                      
+                      {escalas.find(e => e.id === editingEscalaId)?.formData.bgAttachment && (
+                          <>
+                            <span className="text-gray-300">|</span>
+                            <a href={escalas.find(e => e.id === editingEscalaId)?.formData.bgAttachment} target="_blank" rel="noreferrer" className="text-xs font-bold text-blue-600 hover:underline">Boletim Geral (BG)</a>
+                          </>
+                      )}
                   </div>
-                  {editingEscalaId && escalas.find(e => e.id === editingEscalaId) && (
-                      <div className="flex items-center gap-2 px-2">
-                          <span className="text-xs font-bold text-gray-500 uppercase">Consultas: </span>
-                          <button onClick={() => {
-                              window.open(generateEscalaOnlyPDF(state, false, currentUser, escalas.find(e => e.id === editingEscalaId)?.escalaApprovalLabel) as string, '_blank');
-                          }} className="text-xs font-bold text-blue-600 hover:underline">Escala Aprovada (PDF)</button>
-                          
-                          {escalas.find(e => e.id === editingEscalaId)?.formData.nsAttachment && (
-                              <>
-                                <span className="text-gray-300">|</span>
-                                <a href={escalas.find(e => e.id === editingEscalaId)?.formData.nsAttachment} target="_blank" rel="noreferrer" className="text-xs font-bold text-blue-600 hover:underline">Nota de Serviço (NS)</a>
-                              </>
-                          )}
-                          
-                          {escalas.find(e => e.id === editingEscalaId)?.formData.bgAttachment && (
-                              <>
-                                <span className="text-gray-300">|</span>
-                                <a href={escalas.find(e => e.id === editingEscalaId)?.formData.bgAttachment} target="_blank" rel="noreferrer" className="text-xs font-bold text-blue-600 hover:underline">Boletim Geral (BG)</a>
-                              </>
-                          )}
-                      </div>
-                  )}
               </div>
             )}
 
@@ -4409,159 +4734,295 @@ const App: React.FC = () => {
 
                 {state.currentDoc === DocumentType.COST_SHEET && (
                   <div className="space-y-6">
-                    <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-                      {/* Formulário Principal - Esquerda */}
-                      <div className="lg:col-span-7 bg-white dark:bg-gray-800 rounded-lg p-5 border border-gray-200 dark:border-gray-700 shadow-sm border-l-4 border-l-cbmpa-500 space-y-6">
-                        <h3 className="font-bold text-gray-600 dark:text-gray-300 uppercase">CRIAR ESCALA E ADICIONAR MILITARES</h3>
-                        
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                           <div>
-                              <label className="block text-xs font-bold text-gray-600 mb-1">NOME DO EVENTO</label>
-                              <input type="text" className="w-full p-2 border rounded dark:bg-gray-700" value={state.formData.operationName} onChange={(e) => handleInputChange('operationName', e.target.value)} />
-                           </div>
-                           <div>
-                              <label className="block text-xs font-bold text-gray-600 mb-1">UBM DE ORIGEM</label>
-                              <select className="w-full p-2 border rounded dark:bg-gray-700" value={state.formData.ubmOrigem} onChange={(e) => handleInputChange('ubmOrigem', e.target.value)}>
-                                 <option value="">Selecione a UBM</option>
-                                 {UBMS.map(u => <option key={u} value={u}>{u}</option>)}
-                              </select>
-                           </div>
-                           <div className="relative">
-                              <label className="block text-xs font-bold text-gray-600 mb-1">HOMOLOGADOR (APROVADOR FINAL)</label>
-                              <input type="text" className="w-full p-2 border rounded dark:bg-gray-700" placeholder="Buscar por nome ou matrícula..." value={homologadorSearchTerm} onChange={handleHomologadorSearchChange} />
-                              {showHomologadorSuggestions && (
-                                 <ul className="absolute z-50 bg-white dark:bg-gray-800 border rounded shadow-lg max-h-40 overflow-auto w-full mt-1">
-                                   {homologadorSuggestions.map(s => <li key={s.matricula} onClick={() => selectHomologador(s)} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer text-sm">{s.posto} {s.nome}</li>)}
-                                 </ul>
+                    {/* 1. Formulário Principal (Dados da Escala e Adição de Militares) */}
+                    <div className="bg-white dark:bg-gray-800 rounded-lg p-5 border border-gray-200 dark:border-gray-700 shadow-sm border-l-4 border-l-cbmpa-500 space-y-6">
+                      <h3 className="font-bold text-gray-600 dark:text-gray-300 uppercase">CRIAR ESCALA E ADICIONAR MILITARES</h3>
+                      
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                         <div>
+                            <label className="block text-xs font-bold text-gray-600 dark:text-gray-300 mb-1">NOME DO EVENTO</label>
+                            <input type="text" className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white" value={state.formData.operationName} onChange={(e) => handleInputChange('operationName', e.target.value)} />
+                         </div>
+                         <div>
+                            <label className="block text-xs font-bold text-gray-600 dark:text-gray-300 mb-1">UBM DE ORIGEM</label>
+                            <select className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white" value={state.formData.ubmOrigem} onChange={(e) => handleInputChange('ubmOrigem', e.target.value)}>
+                               <option value="">Selecione a UBM</option>
+                               {UBMS.map(u => <option key={u} value={u}>{u}</option>)}
+                            </select>
+                         </div>
+                         <div className="relative md:col-span-2">
+                            <label className="block text-xs font-bold text-gray-600 dark:text-gray-300 mb-1 flex items-center justify-between">
+                              <span>DESTINATÁRIO / HOMOLOGADOR DO PROCESSO</span>
+                              {(state.formData.recipientMatricula || state.formData.homologadorMatricula) && (
+                                <span className="text-cbmpa-600 dark:text-yellow-500 font-semibold">
+                                  Matrícula: {state.formData.recipientMatricula || state.formData.homologadorMatricula}
+                                </span>
                               )}
-                           </div>
-                           <div>
-                              <label className="block text-xs font-bold text-gray-600 mb-1">FUNÇÃO DO HOMOLOGADOR</label>
-                              <input type="text" className="w-full p-2 border rounded dark:bg-gray-700" placeholder="Ex: Cmt de UBM, Diretor..." value={state.formData.homologadorFuncao || ''} onChange={(e) => handleInputChange('homologadorFuncao', e.target.value)} />
-                           </div>
-                        </div>
-
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-                           <div><label className="block text-xs font-bold text-gray-600 mb-1">DATA</label><input type="date" className="w-full p-2 border rounded dark:bg-gray-700" value={state.formData.eventDate} onChange={(e) => handleInputChange('eventDate', e.target.value)} /></div>
-                           <div><label className="block text-xs font-bold text-gray-600 mb-1">LOCAL</label><input type="text" className="w-full p-2 border rounded dark:bg-gray-700" value={state.formData.eventLocal} onChange={(e) => handleInputChange('eventLocal', e.target.value)} /></div>
-                           <div><label className="block text-xs font-bold text-gray-600 mb-1">UNIFORME</label><input type="text" className="w-full p-2 border rounded dark:bg-gray-700" value={state.formData.uniform || ''} onChange={(e) => handleInputChange('uniform', e.target.value)} placeholder="4º A - PRONTIDÃO COMPLETO;" /></div>
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-2">
-                           <div>
-                              <label className="block text-xs font-bold text-gray-600 mb-1 flex items-center justify-between">
-                                <span>Nº DA NS</span>
-                                {state.formData.nsAttachment && <a href={state.formData.nsAttachment} target="_blank" rel="noreferrer" className="text-blue-500 hover:underline">Ver Anexo</a>}
-                              </label>
-                              <div className="flex flex-col gap-2">
-                                <input type="text" className="w-full p-2 border rounded dark:bg-gray-700" value={state.formData.memoNsNum} onChange={(e) => handleInputChange('memoNsNum', e.target.value)} />
-                                <button onClick={() => handleFileUploadToDrive('NS')} className="flex items-center justify-center gap-2 bg-gray-200 hover:bg-gray-300 text-gray-700 p-2 rounded dark:bg-gray-600 dark:text-white w-full text-xs font-bold transition-colors">
-                                   <Upload size={14} /> ANEXAR
-                                </button>
-                              </div>
-                           </div>
-                           <div>
-                              <label className="block text-xs font-bold text-gray-600 mb-1 flex items-center justify-between">
-                                <span>Nº DO BG</span>
-                                {state.formData.bgAttachment && <a href={state.formData.bgAttachment} target="_blank" rel="noreferrer" className="text-blue-500 hover:underline">Ver Anexo</a>}
-                              </label>
-                              <div className="flex flex-col gap-2">
-                                <input type="text" className="w-full p-2 border rounded dark:bg-gray-700" value={state.formData.memoBgNum} onChange={(e) => handleInputChange('memoBgNum', e.target.value)} />
-                                <button onClick={() => handleFileUploadToDrive('BG')} className="flex items-center justify-center gap-2 bg-gray-200 hover:bg-gray-300 text-gray-700 p-2 rounded dark:bg-gray-600 dark:text-white w-full text-xs font-bold transition-colors">
-                                   <Upload size={14} /> ANEXAR
-                                </button>
-                              </div>
-                           </div>
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-2">
-                           <div><label className="block text-xs font-bold text-gray-600 mb-1">HORA INÍCIO</label><input type="time" className="w-full p-2 border rounded dark:bg-gray-700" value={state.formData.eventStartTime} onChange={(e) => handleInputChange('eventStartTime', e.target.value)} /></div>
-                           <div><label className="block text-xs font-bold text-gray-600 mb-1">HORA TÉRMINO</label><input type="time" className="w-full p-2 border rounded dark:bg-gray-700" value={state.formData.eventEndTime} onChange={(e) => handleInputChange('eventEndTime', e.target.value)} /></div>
-                        </div>
-
-                        <div>
-                           <label className="block text-xs font-bold text-gray-600 mb-1">OBSERVAÇÃO (OPCIONAL)</label>
-                           <textarea 
-                              className="w-full p-2 border rounded dark:bg-gray-700" 
-                              placeholder="Insira qualquer observação relevante..." 
-                              rows={2}
-                              value={state.formData.escalaObs || ''} 
-                              onChange={(e) => handleInputChange('escalaObs', e.target.value)} 
-                           />
-                        </div>
-                        
-                        <div className="space-y-4 pt-4 border-t border-gray-200 dark:border-gray-700">
-                           <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
-                             <div className="md:col-span-6 relative">
-                                 <label className="block text-xs font-bold text-gray-600 mb-1">BUSCAR MILITAR</label>
-                                 <input type="text" className="w-full p-2 border rounded dark:bg-gray-700" placeholder="Matrícula ou Nome..." value={costSearchTerm} onChange={handleCostSearchChange} />
-                                 {showCostSuggestions && (
-                                   <ul className="absolute z-50 bg-white dark:bg-gray-800 border rounded shadow-lg max-h-40 overflow-auto w-full mt-1">
-                                     {costSuggestions.map(s => <li key={s.matricula} onClick={() => selectCostSoldier(s)} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer text-sm">{s.posto} {s.nome}</li>)}
-                                   </ul>
-                                 )}
-                             </div>
-                             <div className="md:col-span-2">
-                                  <label className="block text-xs font-bold text-gray-600 mb-1">UBM</label>
-                                  <select className="w-full p-2 border rounded dark:bg-gray-700" value={newCostItem.ubm} onChange={(e) => setNewCostItem({...newCostItem, ubm: e.target.value})}>
-                                     {UBMS.map(u => <option key={u} value={u}>{u}</option>)}
-                                  </select>
-                             </div>
-                             <div className="md:col-span-4 flex items-end">
-                               <button onClick={addSoldierToRoster} className="w-full bg-cbmpa-600 text-white px-4 py-2 rounded font-bold hover:bg-cbmpa-700 flex items-center justify-center gap-1">
-                                 <Plus size={16} /> Adicionar à escala
-                               </button>
-                             </div>
-                           </div>
-                        </div>
+                            </label>
+                            <input 
+                              type="text" 
+                              className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white" 
+                              placeholder="Buscar por nome ou matrícula do militar destinatário/homologador..." 
+                              value={recipientSearchTerm || homologadorSearchTerm} 
+                              onChange={handleRecipientSearchChange} 
+                            />
+                            {showRecipientSuggestions && (
+                              <ul className="absolute z-50 bg-white dark:bg-gray-800 border rounded shadow-lg max-h-48 overflow-auto w-full mt-1 divide-y dark:divide-gray-700">
+                                {recipientSuggestions.map(s => (
+                                  <li 
+                                    key={s.matricula} 
+                                    onClick={() => selectRecipient(s)} 
+                                    className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer text-sm flex justify-between items-center"
+                                  >
+                                    <div>
+                                      <span className="font-bold text-cbmpa-900 dark:text-yellow-500">{s.posto ? s.posto.toUpperCase() + ' ' : ''}{s.nome}</span>
+                                      <span className="text-xs text-gray-500 block">UBM: {s.ubm || 'CBMPA'}</span>
+                                    </div>
+                                    <span className="text-xs bg-gray-100 dark:bg-gray-700 px-2 py-1 rounded font-mono">Mat: {s.matricula}</span>
+                                  </li>
+                                ))}
+                              </ul>
+                            )}
+                         </div>
+                         <div>
+                            <label className="block text-xs font-bold text-gray-600 dark:text-gray-300 mb-1">FUNÇÃO DO DESTINATÁRIO (TEXTO LIVRE)</label>
+                            <input type="text" className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white" placeholder="Ex: Comandante Geral do CBMPA" value={state.formData.recipientCargo || ''} onChange={(e) => handleInputChange('recipientCargo', e.target.value)} />
+                         </div>
+                         <div>
+                            <label className="block text-xs font-bold text-gray-600 dark:text-gray-300 mb-1">TIPO DE SERVIÇO DA ESCALA</label>
+                            <select 
+                              className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white font-semibold"
+                              value={state.formData.serviceType || 'PREVENCAO'}
+                              onChange={(e) => {
+                                const newType = e.target.value;
+                                handleInputChange('serviceType', newType);
+                                setNewCostItem(prev => ({ ...prev, serviceType: newType }));
+                              }}
+                            >
+                              <option value="PREVENCAO">Prevenção Desportiva</option>
+                              <option value="DIVERSOS">Serviços Diversos</option>
+                              <option value="GUARDA_VIDAS">Guarda Vidas</option>
+                              <option value="CORTE_VEGETAL">Corte de Vegetal</option>
+                            </select>
+                         </div>
                       </div>
 
-                      {/* Lista de Militares Adicionados - Direita */}
-                      <div className="lg:col-span-5 bg-white dark:bg-gray-800 rounded-lg p-5 border border-gray-200 dark:border-gray-700 shadow-sm border-t-4 border-t-cbmpa-500 space-y-4">
-                        <h3 className="font-bold text-gray-700 dark:text-gray-200 text-sm uppercase flex justify-between items-center pb-2 border-b">
-                          <span>Militares na Escala ({(state.formData.costSheetItems || []).length})</span>
-                          <span className="text-xs bg-cbmpa-50 dark:bg-cbmpa-950 text-cbmpa-600 dark:text-cbmpa-400 px-2.5 py-0.5 rounded-full font-semibold">Tropa Ativa</span>
-                        </h3>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                         <div>
+                            <label className="block text-xs font-bold text-gray-600 dark:text-gray-300 mb-1">DATA DO EVENTO</label>
+                            <input type="date" className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white" value={state.formData.eventDate} onChange={(e) => handleInputChange('eventDate', e.target.value)} />
+                         </div>
+                         <div>
+                            <label className="block text-xs font-bold text-gray-600 dark:text-gray-300 mb-1">LOCAL DO EVENTO</label>
+                            <input type="text" className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white" placeholder="Ex: Estádio Mangueirāo" value={state.formData.eventLocal} onChange={(e) => handleInputChange('eventLocal', e.target.value)} />
+                         </div>
+                         <div>
+                            <label className="block text-xs font-bold text-gray-600 dark:text-gray-300 mb-1">UNIFORME</label>
+                            <input type="text" className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white" placeholder="Ex: 4º A (Operacional)" value={state.formData.uniform || ''} onChange={(e) => handleInputChange('uniform', e.target.value)} />
+                         </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                         <div>
+                            <label className="block text-xs font-bold text-gray-600 dark:text-gray-300 mb-1 flex items-center justify-between">
+                              <span>Nº DA NOTA DE SERVIÇO (NS)</span>
+                              {state.formData.nsAttachment && <a href={state.formData.nsAttachment} target="_blank" rel="noreferrer" className="text-blue-500 hover:underline">Ver Anexo</a>}
+                            </label>
+                            <div className="flex flex-col gap-2">
+                              <input type="text" className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white" value={state.formData.memoNsNum} onChange={(e) => handleInputChange('memoNsNum', e.target.value)} />
+                              <button type="button" onClick={() => handleFileUploadToDrive('NS')} className="flex items-center justify-center gap-2 bg-gray-200 hover:bg-gray-300 text-gray-700 p-2 rounded dark:bg-gray-600 dark:text-white w-full text-xs font-bold transition-colors">
+                                 <Upload size={14} /> ANEXAR
+                              </button>
+                            </div>
+                         </div>
+                         <div>
+                            <label className="block text-xs font-bold text-gray-600 dark:text-gray-300 mb-1 flex items-center justify-between">
+                              <span>Nº DO BG</span>
+                              {state.formData.bgAttachment && <a href={state.formData.bgAttachment} target="_blank" rel="noreferrer" className="text-blue-500 hover:underline">Ver Anexo</a>}
+                            </label>
+                            <div className="flex flex-col gap-2">
+                              <input type="text" className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white" value={state.formData.memoBgNum} onChange={(e) => handleInputChange('memoBgNum', e.target.value)} />
+                              <button type="button" onClick={() => handleFileUploadToDrive('BG')} className="flex items-center justify-center gap-2 bg-gray-200 hover:bg-gray-300 text-gray-700 p-2 rounded dark:bg-gray-600 dark:text-white w-full text-xs font-bold transition-colors">
+                                 <Upload size={14} /> ANEXAR
+                              </button>
+                            </div>
+                         </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2">
+                         <div><label className="block text-xs font-bold text-gray-600 dark:text-gray-300 mb-1">HORA INÍCIO</label><input type="time" className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white" value={state.formData.eventStartTime} onChange={(e) => handleInputChange('eventStartTime', e.target.value)} /></div>
+                         <div><label className="block text-xs font-bold text-gray-600 dark:text-gray-300 mb-1">HORA TÉRMINO</label><input type="time" className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white" value={state.formData.eventEndTime} onChange={(e) => handleInputChange('eventEndTime', e.target.value)} /></div>
+                      </div>
+
+                      <div>
+                         <label className="block text-xs font-bold text-gray-600 dark:text-gray-300 mb-1">OBSERVAÇÃO (OPCIONAL)</label>
+                         <textarea 
+                            className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white" 
+                            placeholder="Insira qualquer observação relevante..." 
+                            rows={2}
+                            value={state.formData.escalaObs || ''} 
+                            onChange={(e) => handleInputChange('escalaObs', e.target.value)} 
+                         />
+                      </div>
+                      
+                      <div className="space-y-4 pt-4 border-t border-gray-200 dark:border-gray-700">
+                         <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
+                           <div className="md:col-span-5 relative">
+                               <label className="block text-xs font-bold text-gray-600 dark:text-gray-300 mb-1">BUSCAR MILITAR</label>
+                               <input type="text" className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white" placeholder="Matrícula ou Nome..." value={costSearchTerm} onChange={handleCostSearchChange} />
+                               {showCostSuggestions && (
+                                 <ul className="absolute z-50 bg-white dark:bg-gray-800 border rounded shadow-lg max-h-40 overflow-auto w-full mt-1">
+                                   {costSuggestions.map(s => <li key={s.matricula} onClick={() => selectCostSoldier(s)} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer text-sm">{s.posto} {s.nome}</li>)}
+                                 </ul>
+                               )}
+                           </div>
+                           <div className="md:col-span-2">
+                                <label className="block text-xs font-bold text-gray-600 dark:text-gray-300 mb-1">UBM</label>
+                                <select className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white" value={newCostItem.ubm} onChange={(e) => setNewCostItem({...newCostItem, ubm: e.target.value})}>
+                                   {UBMS.map(u => <option key={u} value={u}>{u}</option>)}
+                                </select>
+                           </div>
+                           <div className="md:col-span-3">
+                                <label className="block text-xs font-bold text-gray-600 dark:text-gray-300 mb-1">TIPO DE SERVIÇO</label>
+                                <select 
+                                  className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white text-xs font-semibold"
+                                  value={newCostItem.serviceType || state.formData.serviceType || 'PREVENCAO'}
+                                  onChange={(e) => setNewCostItem({...newCostItem, serviceType: e.target.value})}
+                                >
+                                  <option value="PREVENCAO">Prevenção Desportiva</option>
+                                  <option value="DIVERSOS">Serviços Diversos</option>
+                                  <option value="GUARDA_VIDAS">Guarda Vidas</option>
+                                  <option value="CORTE_VEGETAL">Corte de Vegetal</option>
+                                </select>
+                           </div>
+                           <div className="md:col-span-2 flex items-end">
+                             <button type="button" onClick={addSoldierToRoster} className="w-full bg-cbmpa-600 text-white px-3 py-2 rounded font-bold hover:bg-cbmpa-700 flex items-center justify-center gap-1 transition-colors text-xs">
+                               <Plus size={16} /> Adicionar
+                             </button>
+                           </div>
+                         </div>
+                      </div>
+                    </div>
+
+                    {/* 2. Lista de Militares Adicionados - Na parte debaixo */}
+                    <div className="bg-white dark:bg-gray-800 rounded-lg p-5 border border-gray-200 dark:border-gray-700 shadow-sm border-t-4 border-t-cbmpa-500 space-y-4">
+                      <h3 className="font-bold text-gray-700 dark:text-gray-200 text-sm uppercase flex justify-between items-center pb-2 border-b">
+                        <span>Militares na Escala ({(state.formData.costSheetItems || []).length})</span>
+                        <span className="text-xs bg-cbmpa-50 dark:bg-cbmpa-950 text-cbmpa-600 dark:text-cbmpa-400 px-2.5 py-0.5 rounded-full font-semibold">Tropa Ativa</span>
+                      </h3>
+                      
+                      {(state.formData.costSheetItems || []).length > 0 ? (
+                        <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
+                          <table className="w-full text-sm">
+                             <thead className="bg-gray-50 dark:bg-gray-700 text-gray-600 dark:text-gray-300 uppercase text-xs sticky top-0">
+                                <tr>
+                                   <th className="p-2.5 text-left text-xs">MATRÍCULA</th>
+                                   <th className="p-2.5 text-left text-xs">MILITAR</th>
+                                   <th className="p-2.5 text-left text-xs">FUNÇÃO</th>
+                                   <th className="p-2.5 text-left text-xs">TIPO DE SERVIÇO</th>
+                                   <th className="p-2.5 text-center text-xs">AÇÃO</th>
+                                </tr>
+                             </thead>
+                             <tbody>
+                                {(state.formData.costSheetItems || []).map((item, index) => (
+                                   <tr key={item.id} className={`border-b border-gray-100 dark:border-gray-700 ${item.isCommander ? "bg-yellow-50 dark:bg-yellow-950/20" : item.isAuxiliar ? "bg-blue-50 dark:bg-blue-950/20" : ""}`}>
+                                      <td className="p-2.5 text-xs font-mono">{item.soldierMatricula}</td>
+                                      <td className="p-2.5">
+                                        <div className="font-bold text-gray-900 dark:text-gray-100 text-xs">{item.soldierRank} {item.soldierName}</div>
+                                        <div className="text-[10px] text-gray-500">{item.soldierUbm}</div>
+                                      </td>
+                                      <td className="p-2.5">
+                                         <select className="w-full p-1.5 border rounded dark:bg-gray-700 text-xs dark:border-gray-600 dark:text-white" value={item.role || (item.isCommander ? 'Comandante' : item.isAuxiliar ? 'Aux. do Cmt' : '')} onChange={(e) => updateRole(item.id, e.target.value, 'COST')}>
+                                            <option value="">Selecione...</option>
+                                            {ROLES.map(r => <option key={r} value={r}>{r}</option>)}
+                                         </select>
+                                      </td>
+                                      <td className="p-2.5">
+                                         <select 
+                                           className="w-full p-1.5 border rounded dark:bg-gray-700 text-xs dark:border-gray-600 dark:text-white font-medium"
+                                           value={item.serviceType || 'PREVENCAO'}
+                                           onChange={(e) => {
+                                             const newType = e.target.value;
+                                             setState(prev => ({
+                                               ...prev,
+                                               formData: {
+                                                 ...prev.formData,
+                                                 costSheetItems: prev.formData.costSheetItems.map(i => i.id === item.id ? { ...i, serviceType: newType as any } : i)
+                                               }
+                                             }));
+                                           }}
+                                         >
+                                           <option value="PREVENCAO">Prevenção Desportiva</option>
+                                           <option value="DIVERSOS">Serviços Diversos</option>
+                                           <option value="GUARDA_VIDAS">Guarda Vidas</option>
+                                           <option value="CORTE_VEGETAL">Corte de Vegetal</option>
+                                         </select>
+                                      </td>
+                                      <td className="p-2.5 text-center">
+                                        <button type="button" onClick={() => removeCostItem(item.id)} className="text-red-400 hover:text-red-600 p-1"><Trash2 size={16} /></button>
+                                      </td>
+                                   </tr>
+                                ))}
+                             </tbody>
+                          </table>
+                        </div>
+                      ) : (
+                        <div className="text-gray-400 text-center py-12 text-sm">
+                          <p className="font-medium">Nenhum militar adicionado ainda.</p>
+                          <p className="text-xs text-gray-500 mt-1">Busque um militar no formulário acima e clique em "+ Adicionar à escala".</p>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* 3. Botões de Ação no final do Formulário */}
+                    <div className="bg-white dark:bg-gray-800 rounded-lg p-4 border border-gray-200 dark:border-gray-700 shadow-sm flex flex-wrap justify-between items-center gap-4">
+                      <button 
+                        type="button" 
+                        onClick={() => setActiveTab('ESCALANTE')} 
+                        className="px-6 py-2.5 text-gray-600 dark:text-gray-300 font-bold hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg border border-gray-300 dark:border-gray-600 transition-colors"
+                      >
+                        Cancelar / Voltar
+                      </button>
+                      
+                      <div className="flex flex-wrap items-center gap-3">
+                        <button 
+                          type="button" 
+                          onClick={() => {
+                            const currE = escalas.find(e => e.id === editingEscalaId);
+                            window.open(generateEscalaOnlyPDF(state, false, currentUser, currE?.escalaApprovalLabel) as string, '_blank');
+                          }} 
+                          className="border border-red-600 text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30 px-5 py-2.5 rounded-lg font-bold flex items-center gap-2 transition-colors"
+                        >
+                          <Download size={18} /> Ver PDF Final
+                        </button>
                         
-                        {(state.formData.costSheetItems || []).length > 0 ? (
-                          <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
-                            <table className="w-full text-sm">
-                               <thead className="bg-gray-50 dark:bg-gray-700 text-gray-600 dark:text-gray-300 uppercase text-xs sticky top-0">
-                                  <tr>
-                                     <th className="p-2.5 text-left text-xs">MATRÍCULA</th>
-                                     <th className="p-2.5 text-left text-xs">MILITAR</th>
-                                     <th className="p-2.5 text-left text-xs">FUNÇÃO</th>
-                                     <th className="p-2.5 text-center text-xs">AÇÃO</th>
-                                  </tr>
-                               </thead>
-                               <tbody>
-                                  {(state.formData.costSheetItems || []).map((item, index) => (
-                                     <tr key={item.id} className={`border-b border-gray-100 dark:border-gray-700 ${item.isCommander ? "bg-yellow-50 dark:bg-yellow-950/20" : item.isAuxiliar ? "bg-blue-50 dark:bg-blue-950/20" : ""}`}>
-                                        <td className="p-2.5 text-xs font-mono">{item.soldierMatricula}</td>
-                                        <td className="p-2.5">
-                                          <div className="font-bold text-gray-900 dark:text-gray-100 text-xs">{item.soldierRank} {item.soldierName}</div>
-                                          <div className="text-[10px] text-gray-500">{item.soldierUbm}</div>
-                                        </td>
-                                        <td className="p-2.5">
-                                           <select className="w-full p-1.5 border rounded dark:bg-gray-700 text-xs" value={item.role || (item.isCommander ? 'Comandante' : item.isAuxiliar ? 'Aux. do Cmt' : '')} onChange={(e) => updateRole(item.id, e.target.value, 'COST')}>
-                                              <option value="">Selecione...</option>
-                                              {ROLES.map(r => <option key={r} value={r}>{r}</option>)}
-                                           </select>
-                                        </td>
-                                        <td className="p-2.5 text-center">
-                                          <button onClick={() => removeCostItem(item.id)} className="text-red-400 hover:text-red-600 p-1"><Trash2 size={16} /></button>
-                                        </td>
-                                     </tr>
-                                  ))}
-                               </tbody>
-                            </table>
-                          </div>
-                        ) : (
-                          <div className="text-gray-400 text-center py-12 text-sm">
-                            <p className="font-medium">Nenhum militar adicionado ainda.</p>
-                            <p className="text-xs text-gray-500 mt-1">Busque um militar no formulário ao lado e clique em "+ Adicionar à escala".</p>
-                          </div>
-                        )}
+                        {(() => {
+                          const evDate = state.formData.eventDate;
+                          const evTime = state.formData.eventStartTime;
+                          let isOpen = true;
+                          if (evDate && evTime) {
+                            const dt = new Date(`${evDate}T${evTime}`);
+                            if (!isNaN(dt.getTime()) && new Date() >= dt) isOpen = false;
+                          }
+                          
+                          if (isOpen) {
+                            return (
+                              <button 
+                                type="button" 
+                                onClick={() => saveEscalaWorkflow('em_edicao', 'Escala salva com sucesso!', false)} 
+                                className="bg-cbmpa-700 hover:bg-cbmpa-800 text-white px-8 py-2.5 rounded-lg font-bold shadow-sm transition-all hover:scale-[1.01]"
+                              >
+                                Salvar Escala
+                              </button>
+                            );
+                          } else {
+                            return (
+                              <div className="bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-300 px-4 py-2.5 rounded-lg font-bold border border-red-200 dark:border-red-800">
+                                Escala Fechada (Evento Iniciado)
+                              </div>
+                            );
+                          }
+                        })()}
                       </div>
                     </div>
                   </div>
@@ -4625,12 +5086,58 @@ const App: React.FC = () => {
                               <input type="number" className="w-full p-1.5 text-xs border rounded border-blue-300 dark:bg-gray-700" value={state.formData.eventPublicEstimate} onChange={e => handleInputChange('eventPublicEstimate', e.target.value)} />
                            </div>
                         </div>
-                        <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
+                        <div className="grid grid-cols-1 md:grid-cols-12 gap-3 mb-3 p-3 bg-amber-50/70 dark:bg-amber-950/20 rounded-lg border border-amber-200 dark:border-amber-800">
                            <div className="md:col-span-6">
-                              <label className="block text-[10px] font-bold text-gray-600 mb-1 uppercase">REF. (NS)</label>
+                              <label className="block text-[10px] font-bold text-gray-700 dark:text-gray-300 mb-1 uppercase flex items-center justify-between">
+                                 <span>Nota de Serviço (NS)</span>
+                                 {state.formData.nsAttachment ? (
+                                    <a href={state.formData.nsAttachment} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline text-[11px] font-bold">Ver Anexo NS</a>
+                                 ) : (
+                                    <span className="text-amber-700 text-[10px] font-bold">Pendente de Anexo</span>
+                                 )}
+                              </label>
                               <div className="flex gap-2">
-                                 <input type="text" className="w-full p-1.5 text-xs border rounded dark:bg-gray-700 bg-gray-50 text-gray-600 cursor-not-allowed" value={state.formData.memoNsNum} readOnly />
-                                 <input type="text" className="w-full p-1.5 text-xs border rounded dark:bg-gray-700 bg-gray-50 text-gray-600 cursor-not-allowed" value={state.formData.memoNsYear} readOnly />
+                                 <input 
+                                    type="text" 
+                                    className="w-full p-1.5 text-xs border rounded dark:bg-gray-700 bg-white dark:text-white" 
+                                    placeholder="Nº da Nota de Serviço"
+                                    value={state.formData.memoNsNum || ''} 
+                                    onChange={(e) => handleInputChange('memoNsNum', e.target.value)} 
+                                 />
+                                 <button 
+                                    type="button" 
+                                    onClick={() => handleFileUploadToDrive('NS')} 
+                                    className="flex items-center gap-1 px-3 py-1 bg-cbmpa-600 hover:bg-cbmpa-700 text-white rounded text-xs font-bold transition shrink-0"
+                                 >
+                                    <Upload size={12} /> {state.formData.nsAttachment ? 'Alterar NS' : 'Anexar NS'}
+                                 </button>
+                              </div>
+                           </div>
+
+                           <div className="md:col-span-6">
+                              <label className="block text-[10px] font-bold text-gray-700 dark:text-gray-300 mb-1 uppercase flex items-center justify-between">
+                                 <span>Boletim Geral (BG) de Publicação</span>
+                                 {state.formData.bgAttachment ? (
+                                    <a href={state.formData.bgAttachment} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline text-[11px] font-bold">Ver Anexo BG</a>
+                                 ) : (
+                                    <span className="text-amber-700 text-[10px] font-bold">Pendente de Anexo</span>
+                                 )}
+                              </label>
+                              <div className="flex gap-2">
+                                 <input 
+                                    type="text" 
+                                    className="w-full p-1.5 text-xs border rounded dark:bg-gray-700 bg-white dark:text-white" 
+                                    placeholder="Nº do Boletim Geral"
+                                    value={state.formData.memoBgNum || ''} 
+                                    onChange={(e) => handleInputChange('memoBgNum', e.target.value)} 
+                                 />
+                                 <button 
+                                    type="button" 
+                                    onClick={() => handleFileUploadToDrive('BG')} 
+                                    className="flex items-center gap-1 px-3 py-1 bg-cbmpa-600 hover:bg-cbmpa-700 text-white rounded text-xs font-bold transition shrink-0"
+                                 >
+                                    <Upload size={12} /> {state.formData.bgAttachment ? 'Alterar BG' : 'Anexar BG'}
+                                 </button>
                               </div>
                            </div>
                         </div>
@@ -5016,10 +5523,40 @@ const App: React.FC = () => {
                            ))}
                         </div>
                      </div>
+
+                                     {/* Botões de Ação do Relatório */}
+                     <div className="bg-white dark:bg-gray-800 rounded-lg p-4 border border-gray-200 dark:border-gray-700 shadow-sm flex flex-wrap justify-between items-center gap-4 mt-6">
+                        <button type="button" onClick={() => setActiveTab('PORTAL')} className="px-6 py-2.5 text-gray-600 dark:text-gray-300 font-bold hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg border border-gray-300 dark:border-gray-600 transition-colors">Cancelar / Voltar</button>
+                        <div className="flex flex-wrap items-center gap-3">
+                           <button type="button" onClick={() => {
+                             const currE = escalas.find(e => e.id === editingEscalaId);
+                             window.open(generatePDF(state, currE), '_blank');
+                           }} className="border border-red-600 text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30 px-5 py-2.5 rounded-lg font-bold flex items-center gap-2 transition-colors">
+                             <Download size={18}/> Ver PDF Final
+                           </button>
+                           {(() => {
+                             const escala = escalas.find(e => e.id === editingEscalaId);
+                             const isCmtOrAux = escala?.comandanteMatricula === currentUser.matricula || escala?.auxiliarMatricula === currentUser.matricula;
+                             if (isCmtOrAux && ['em_edicao', 'esclarecimento_solicitado'].includes(escala?.status || '')) {
+                               return (
+                                 <div className="flex gap-3">
+                                   <button type="button" onClick={() => saveEscalaWorkflow(escala.status, 'Relatório salvo com sucesso!', true)} className="bg-cbmpa-700 text-white px-6 py-2.5 rounded-lg font-bold hover:bg-cbmpa-800 transition-colors">
+                                     Salvar Relatório
+                                   </button>
+                                   <button type="button" onClick={() => setShowAtestarConfirmModal(editingEscalaId)} className="bg-green-600 text-white px-6 py-2.5 rounded-lg font-bold hover:bg-green-700 transition-colors">
+                                     Atestar Serviço
+                                   </button>
+                                 </div>
+                               );
+                             }
+                             return null;
+                           })()}
+                        </div>
+                     </div>
                   </div>
                 )}
 
-                {/* --- SEÇÃO DE RASTREABILIDADE / ASSINATURAS DO SISTEMA --- */}
+{/* --- SEÇÃO DE RASTREABILIDADE / ASSINATURAS DO SISTEMA --- */}
                 {editingEscalaId && escalas.find(e => e.id === editingEscalaId) && (
                   <div className="mt-8 bg-gray-50 dark:bg-gray-800/80 p-4 rounded-xl border border-gray-200 dark:border-gray-700 text-sm">
                      <h3 className="font-bold text-gray-700 dark:text-gray-300 border-b pb-2 mb-3 flex items-center gap-2">
@@ -5045,73 +5582,7 @@ const App: React.FC = () => {
               </div>
             </div>
 
-            {/* BARRA DE AÇÕES INFERIOR (Substitui os botões soltos) */}
-            <div className="fixed bottom-0 left-0 right-0 md:left-64 bg-white dark:bg-gray-900 border-t border-gray-200 dark:border-gray-800 p-4 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.1)] z-40 flex justify-between items-center">
-               <button onClick={() => setActiveTab('PORTAL')} className="px-6 py-2 text-gray-600 font-bold hover:bg-gray-100 rounded">Cancelar / Voltar</button>
-               
-               <div className="flex gap-3">
-                 {/* O botão original de exportar PDF continua existindo aqui para todos verem */}
-                 <button onClick={() => {
-                   const currE = escalas.find(e => e.id === editingEscalaId);
-                   if (state.currentDoc === DocumentType.COST_SHEET && (currentUser?.permissoes || []).includes('ESCALANTE')) {
-                       window.open(generateEscalaOnlyPDF(state, false, currentUser, currE?.escalaApprovalLabel) as string, '_blank');
-                   } else {
-                       window.open(generatePDF(state, currE), '_blank');
-                   }
-                 }} className="border border-red-600 text-red-600 hover:bg-red-50 px-4 py-2 rounded font-bold flex items-center gap-2"><Download size={18}/> Ver PDF Final</button>
-                 
-                 {/* Botões do Fluxo de Trabalho Baseado no Perfil e Status */}
-                 {activeTab === 'EDITOR' && (
-                    (() => {
-                        const escala = escalas.find(e => e.id === editingEscalaId);
-                        const isCmtOrAux = escala?.comandanteMatricula === currentUser.matricula || escala?.auxiliarMatricula === currentUser.matricula;
-                        
-                        if (state.currentDoc === DocumentType.REPORT) {
-                            if (isCmtOrAux && ['em_edicao', 'esclarecimento_solicitado'].includes(escala?.status || '')) {
-                                return (
-                                   <div className="flex gap-3">
-                                      <button onClick={() => saveEscalaWorkflow(escala.status, 'Relatório salvo com sucesso!', true)} className="bg-cbmpa-700 text-white px-8 py-2 rounded font-bold hover:bg-cbmpa-800">
-                                         Salvar Relatório
-                                      </button>
-                                      <button onClick={() => setShowAtestarConfirmModal(editingEscalaId)} className="bg-green-600 text-white px-8 py-2 rounded font-bold hover:bg-green-700">
-                                         Atestar Serviço
-                                      </button>
-                                   </div>
-                                );
-                            }
-                            return null;
-                        }
-
-                        // Lógica original para outros documentos (COST_SHEET / MEMO) para o Escalante
-                        if ((currentUser?.permissoes || []).includes('ESCALANTE') && (!editingEscalaId || escala?.status === 'em_edicao')) {
-                            const evDate = state.formData.eventDate;
-                            const evTime = state.formData.eventStartTime;
-                            let isOpen = true;
-                            if (evDate && evTime) {
-                               const dt = new Date(`${evDate}T${evTime}`);
-                               if (!isNaN(dt.getTime()) && new Date() >= dt) isOpen = false;
-                            }
-                            
-                            if (isOpen) {
-                                return (
-                                   <button onClick={() => saveEscalaWorkflow('em_edicao', 'Escala salva com sucesso!', true)} className="bg-cbmpa-700 text-white px-8 py-2 rounded font-bold hover:bg-cbmpa-800">
-                                      Salvar Escala
-                                   </button>
-                                );
-                            } else {
-                                return (
-                                   <div className="bg-red-100 text-red-700 px-4 py-2 rounded font-bold border border-red-200">
-                                      Escala Fechada (Evento Iniciado)
-                                   </div>
-                                );
-                            }
-                        }
-                        
-                        return null;
-                    })()
-                 )}
-               </div>
-            </div>
+            
 
           </div>
         )}
@@ -5123,8 +5594,8 @@ const App: React.FC = () => {
             if (!esc) return null;
             const formattedDate = esc.formData.eventDate ? formatAnyDate(esc.formData.eventDate) : 'N/A';
             return (
-              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 overflow-y-auto">
-                <div className="bg-white dark:bg-gray-800 p-6 rounded-xl w-full max-w-4xl shadow-2xl border border-gray-200 dark:border-gray-700 my-8">
+              <div className="fixed inset-0 z-50 overflow-y-auto bg-black/60 backdrop-blur-sm p-4 sm:p-6 flex justify-center items-start">
+                <div className="bg-white dark:bg-gray-800 p-6 rounded-xl w-full max-w-4xl shadow-2xl border border-gray-200 dark:border-gray-700 my-4 sm:my-8">
                    <div className="flex justify-between items-center mb-4 border-b pb-4 border-gray-200 dark:border-gray-700">
                       <div>
                          <span className="text-[10px] font-bold text-cbmpa-700 dark:text-yellow-500 uppercase tracking-widest block mb-1">Visualização e Consulta de Escala</span>
