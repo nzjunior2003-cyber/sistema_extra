@@ -4,7 +4,7 @@ import {
   Flame, Sun, Moon, FileText, DollarSign, ClipboardList, 
   Share2, Upload, Wifi, WifiOff, Database, CheckCircle2, 
   User, Search, Plus, X, Star, Trash2, Check, Download,
-  GripVertical, Camera, Eraser, LayoutDashboard, ShieldCheck, Banknote, LogOut, Lock, AlertTriangle, Clock, ExternalLink, Users, UserPlus, History, UserCheck, ChevronRight
+  GripVertical, Camera, Eraser, LayoutDashboard, ShieldCheck, Banknote, LogOut, Lock, AlertTriangle, Clock, ExternalLink, Users, UserPlus, History, UserCheck, ChevronRight, Eye, EyeOff
 } from 'lucide-react';
 import { AppState, DocumentType, Soldier, CostSheetItem, ReportEffectiveItem, ReportServiceItem } from './types';
 import { RANKS, UBMS, UNIT_VALUE_DEFAULT, EXTERNAL_DB_URL, REPORT_LOGISTICS_ITEMS, REPORT_VEHICLE_ITEMS, OCCURRENCE_CODES, ROLES, MEMO_LEGAL_TEXT } from './constants';
@@ -803,8 +803,11 @@ const App: React.FC = () => {
          setFirstAccessData({ 
            email: foundUser.email || '', 
            novaSenha: '', 
+           confirmarSenha: '',
            nomeGuerra: foundUser.nomeGuerra || '' 
          });
+         setShowNewPassword(false);
+         setShowConfirmPassword(false);
          setShowFirstAccessModal(true);
          setLoginError('');
       } else {
@@ -818,8 +821,11 @@ const App: React.FC = () => {
   };
 
   const confirmFirstAccess = async () => {
-    if (!firstAccessData.email || !firstAccessData.novaSenha || !firstAccessData.nomeGuerra) {
-       alert("Preencha e-mail, nome de guerra e nova senha."); return;
+    if (!firstAccessData.email || !firstAccessData.novaSenha || !firstAccessData.confirmarSenha || !firstAccessData.nomeGuerra) {
+       alert("Preencha e-mail, nome de guerra, nova senha e confirmação de senha."); return;
+    }
+    if (firstAccessData.novaSenha !== firstAccessData.confirmarSenha) {
+       alert("As senhas não coincidem! Por favor, digite a mesma senha no campo de confirmação."); return;
     }
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(firstAccessData.email)) {
@@ -2383,7 +2389,21 @@ const App: React.FC = () => {
               <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1">Senha</label>
               <div className="relative">
                 <Lock className="absolute left-3 top-3 text-gray-400" size={18} />
-                <input type="password" required className="w-full pl-10 pr-3 py-2 border rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white" value={loginData.senha} onChange={e => setLoginData({...loginData, senha: e.target.value})} />
+                <input 
+                  type={showLoginPassword ? "text" : "password"} 
+                  required 
+                  className="w-full pl-10 pr-10 py-2 border rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white" 
+                  value={loginData.senha} 
+                  onChange={e => setLoginData({...loginData, senha: e.target.value})} 
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowLoginPassword(!showLoginPassword)}
+                  className="absolute right-3 top-2.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
+                  title={showLoginPassword ? "Ocultar senha" : "Mostrar senha"}
+                >
+                  {showLoginPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                </button>
               </div>
             </div>
             
@@ -2395,24 +2415,62 @@ const App: React.FC = () => {
           </form>
         </div>
 
-        {/* Modal Primeiro Acesso */}
+        {/* Modal Primeiro Acesso / Redefinição de Senha */}
         {showFirstAccessModal && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
             <div className="bg-white dark:bg-gray-800 p-6 rounded-lg w-full max-w-md shadow-xl border border-gray-200 dark:border-gray-700">
-               <h3 className="text-lg font-bold text-cbmpa-900 border-b pb-2 mb-4">{firstAccessUser?.email ? "Redefinição de Senha" : "Configuração Inicial"}</h3>
+               <h3 className="text-lg font-bold text-cbmpa-900 dark:text-white border-b pb-2 mb-4">{firstAccessUser?.email ? "Redefinição de Senha" : "Configuração Inicial"}</h3>
                <p className="text-sm text-gray-600 dark:text-gray-300 mb-4">{firstAccessUser?.email ? `Olá, ${firstAccessUser?.nome}. Por favor, cadastre sua nova senha.` : `Bem-vindo, ${firstAccessUser?.nome}! Como este é o seu primeiro acesso, cadastre seu e-mail para recuperação, seu nome de guerra e defina uma nova senha.`}</p>
                <div className="space-y-3">
                   <div>
-                    <label className="block text-sm font-bold text-gray-700 mb-1">E-mail para recuperação</label>
-                    <input type="email" required className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600 focus:outline-none focus:ring-2 focus:ring-cbmpa-500" value={firstAccessData.email} onChange={e => setFirstAccessData({...firstAccessData, email: e.target.value})} placeholder="seu.email@exemplo.com" />
+                    <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1">E-mail para recuperação</label>
+                    <input type="email" required className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white focus:outline-none focus:ring-2 focus:ring-cbmpa-500" value={firstAccessData.email} onChange={e => setFirstAccessData({...firstAccessData, email: e.target.value})} placeholder="seu.email@exemplo.com" />
                   </div>
                   <div>
-                    <label className="block text-sm font-bold text-gray-700 mb-1">Nome de Guerra</label>
-                    <input type="text" required className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600 focus:outline-none focus:ring-2 focus:ring-cbmpa-500" value={firstAccessData.nomeGuerra} onChange={e => setFirstAccessData({...firstAccessData, nomeGuerra: e.target.value})} placeholder="Ex: SOUZA JUNIOR" />
+                    <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1">Nome de Guerra</label>
+                    <input type="text" required className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white focus:outline-none focus:ring-2 focus:ring-cbmpa-500" value={firstAccessData.nomeGuerra} onChange={e => setFirstAccessData({...firstAccessData, nomeGuerra: e.target.value})} placeholder="Ex: SOUZA JUNIOR" />
                   </div>
                   <div>
-                    <label className="block text-sm font-bold text-gray-700 mb-1">Nova Senha</label>
-                    <input type="password" required className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600" value={firstAccessData.novaSenha} onChange={e => setFirstAccessData({...firstAccessData, novaSenha: e.target.value})} />
+                    <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1">Nova Senha</label>
+                    <div className="relative">
+                      <input 
+                        type={showNewPassword ? "text" : "password"} 
+                        required 
+                        className="w-full p-2 pr-10 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white" 
+                        value={firstAccessData.novaSenha} 
+                        onChange={e => setFirstAccessData({...firstAccessData, novaSenha: e.target.value})} 
+                        placeholder="Sua nova senha"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowNewPassword(!showNewPassword)}
+                        className="absolute right-3 top-2.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
+                        title={showNewPassword ? "Ocultar senha" : "Mostrar senha"}
+                      >
+                        {showNewPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                      </button>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1">Confirmar Nova Senha</label>
+                    <div className="relative">
+                      <input 
+                        type={showConfirmPassword ? "text" : "password"} 
+                        required 
+                        className="w-full p-2 pr-10 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white" 
+                        value={firstAccessData.confirmarSenha} 
+                        onChange={e => setFirstAccessData({...firstAccessData, confirmarSenha: e.target.value})} 
+                        placeholder="Repita a nova senha"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                        className="absolute right-3 top-2.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
+                        title={showConfirmPassword ? "Ocultar senha" : "Mostrar senha"}
+                      >
+                        {showConfirmPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                      </button>
+                    </div>
                   </div>
                </div>
                <div className="mt-6 flex justify-end gap-2">
