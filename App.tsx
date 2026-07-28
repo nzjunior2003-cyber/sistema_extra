@@ -13,6 +13,8 @@ import { RAW_SOLDIER_CSV } from './data/initialSoldiers';
 import { googleSignIn, initAuth } from './services/authService';
 import { uploadFileToDrive } from './services/driveService';
 import { StatDashboard } from './components/StatDashboard';
+import { CBMPA_LOGO_BASE64, DEFESA_CIVIL_LOGO_BASE64 } from './utils/logoBase64';
+
 
 const STORAGE_KEY = 'extra-docs-state';
 const SYSTEM_ESCALAS_KEY = 'extra-docs-escalas'; // Novo storage para o banco de dados das missões
@@ -84,12 +86,7 @@ const DEFAULT_FORM_DATA = {
 
 // --- MOCK DB DE USUÁRIOS DO SISTEMA ---
 const MOCK_USERS = [
-  { matricula: 'administrador', nome: 'Administrador', posto: 'ADMIN', permissoes: ['ADMIN', 'ESCALANTE', 'APROVADOR', 'PAGAMENTO'], senha: '123456' },
-  { matricula: 'escalante', nome: 'Usuário Escalante', posto: '1º SGT QPBM', permissoes: ['ESCALANTE'], ubmEscalante: '1º GBM', senha: '123456' },
-  { matricula: 'comandante', nome: 'Usuário Comandante', posto: 'CAP QOBM', permissoes: [], senha: '123456' },
-  { matricula: 'homologador', nome: 'Usuário Homologador', posto: 'MAJ QOBM', permissoes: ['APROVADOR'], senha: '123456' },
-  { matricula: 'pagamento', nome: 'Usuário Pagamento', posto: 'ST QPBM', permissoes: ['PAGAMENTO'], senha: '123456' },
-  { matricula: 'militar', nome: 'Usuário Militar', posto: 'SD QPBM', permissoes: [], senha: '123456' }
+  { matricula: 'administrador', nome: 'Administrador', posto: 'ADMIN', permissoes: ['ADMIN', 'ESCALANTE', 'APROVADOR', 'PAGAMENTO'], senha: '123456' }
 ];
 
 const extractFileIdFromUrl = (url: string | null | undefined): string | null => {
@@ -414,11 +411,6 @@ const App: React.FC = () => {
         if (response.ok) {
           const text = await response.text();
           let soldiers = parseCSV(text);
-          MOCK_USERS.forEach(u => {
-            if (u.matricula !== 'administrador') {
-              soldiers.push({ matricula: u.matricula, nome: u.nome, posto: u.posto, ubm: "QCG", cpf: "" });
-            }
-          });
           if (soldiers.length > 0) {
             setState(prev => ({ ...prev, personnelDb: soldiers }));
             setDbStatus(`${soldiers.length} militares (Online)`);
@@ -430,11 +422,6 @@ const App: React.FC = () => {
       } catch (e) {
         try {
           let soldiers = parseCSV(RAW_SOLDIER_CSV);
-          MOCK_USERS.forEach(u => {
-             if (u.matricula !== 'administrador') {
-               soldiers.push({ matricula: u.matricula, nome: u.nome, posto: u.posto, ubm: "QCG", cpf: "" });
-             }
-          });
           setState(prev => ({ ...prev, personnelDb: soldiers }));
           setDbStatus(`${soldiers.length} militares (Offline)`);
           setIsOnline(false);
@@ -2372,9 +2359,12 @@ const App: React.FC = () => {
       <div className="min-h-screen bg-gray-100 dark:bg-gray-900 flex items-center justify-center p-4">
         <div className="bg-white dark:bg-gray-800 p-8 rounded-xl shadow-2xl w-full max-w-md border-t-4 border-cbmpa-700">
           <div className="flex flex-col items-center mb-8">
-            <Flame size={48} className="text-yellow-500 mb-2" />
-            <h1 className="text-3xl font-black text-cbmpa-900 dark:text-white tracking-wider">EXTRA DOCS</h1>
-            <p className="text-sm text-gray-500 mt-1">Acesso Corporativo Integrado</p>
+            <div className="flex items-center gap-4 mb-4">
+              <img src={CBMPA_LOGO_BASE64} alt="Brasão CBMPA" className="w-16 h-16 object-contain" />
+              <img src={DEFESA_CIVIL_LOGO_BASE64} alt="Brasão CEDEC" className="w-16 h-16 object-contain" />
+            </div>
+            <h1 className="text-3xl font-black text-cbmpa-900 dark:text-white tracking-wider text-center">SIGJEx</h1>
+            <p className="text-sm text-gray-500 mt-1">Gestão de Jornada Extraordinária</p>
           </div>
           <form onSubmit={handleLogin} className="space-y-4">
             {loginError && <p className="text-red-500 text-sm bg-red-50 p-2 rounded">{loginError}</p>}
@@ -2529,8 +2519,11 @@ const App: React.FC = () => {
       <aside className="w-full md:w-64 bg-cbmpa-900 text-white flex-shrink-0 flex flex-col shadow-lg z-10">
         <div className="p-6 border-b border-cbmpa-800 flex justify-between items-center bg-cbmpa-950">
           <div className="flex items-center space-x-2">
-            <Flame size={24} className="text-yellow-500" />
-            <h1 className="font-bold text-xl tracking-wider">EXTRA DOCS</h1>
+            <div className="flex items-center gap-2">
+              <img src={CBMPA_LOGO_BASE64} alt="CBMPA" className="w-8 h-8 object-contain" />
+              <img src={DEFESA_CIVIL_LOGO_BASE64} alt="CEDEC" className="w-8 h-8 object-contain" />
+            </div>
+            <h1 className="font-bold text-xl tracking-wider">SIGJEx</h1>
           </div>
           <button onClick={() => setState(prev => ({ ...prev, darkMode: !prev.darkMode }))} className="p-2 rounded-full hover:bg-cbmpa-800 text-yellow-500">
             {state.darkMode ? <Sun size={20} /> : <Moon size={20} />}
