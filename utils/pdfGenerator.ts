@@ -285,7 +285,8 @@ export const generateEscalaOnlyPDF = (state: AppState, returnBlob: boolean = fal
   doc.setFillColor(240, 240, 240);
   doc.rect(14, 60, 182, 6, 'F');
   doc.setFont("helvetica", "bold");
-  doc.text(`${formatDateFull(formData.eventDate)} - TURNO (${formData.eventStartTime || '-'} AO TÉRMINO DO EVENTO)`, 105, 64, { align: 'center' });
+  const endTimeStr = formData.eventEndTime ? `ÀS ${formData.eventEndTime}` : 'AO TÉRMINO DO EVENTO';
+  doc.text(`${formatDateFull(formData.eventDate)} - TURNO (${formData.eventStartTime || '-'} ${endTimeStr})`, 105, 64, { align: 'center' });
 
   // Tabela
   const tableData: any = [];

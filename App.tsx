@@ -9,6 +9,7 @@ import {
 import { AppState, DocumentType, Soldier, CostSheetItem, ReportEffectiveItem, ReportServiceItem } from './types';
 import { RANKS, UBMS, UNIT_VALUE_DEFAULT, EXTERNAL_DB_URL, REPORT_LOGISTICS_ITEMS, REPORT_VEHICLE_ITEMS, OCCURRENCE_CODES, ROLES, MEMO_LEGAL_TEXT } from './constants';
 import { generatePDF, generateEscalaOnlyPDF } from './utils/pdfGenerator';
+import { getEffectiveCostItems } from './utils/costHelpers';
 import { RAW_SOLDIER_CSV } from './data/initialSoldiers';
 import { googleSignIn, initAuth } from './services/authService';
 import { uploadFileToDrive } from './services/driveService';
@@ -126,13 +127,13 @@ const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState('PORTAL'); // PORTAL, ESCALANTE, COMANDANTE, APROVADOR, PAGAMENTO, EDITOR
   const [selectedUbmForRequest, setSelectedUbmForRequest] = useState(UBMS[0]);
   const [editingEscalaId, setEditingEscalaId] = useState<string | null>(null);
-  const getEffectiveCostItems = (formData: any) => {
-    if (!formData) return [];
-    if (Array.isArray(formData.costSheetItems)) {
-      return formData.costSheetItems;
-    }
-    return [];
-  };
+  const pendingPaymentBatchesCount = escalas.filter(e => {
+    if (!['homologado', 'lancado'].includes(e.status)) return false;
+    const items = getEffectiveCostItems(e.formData);
+    if (!items || items.length === 0) return false;
+    const isAllLaunched = e.status === 'lancado' || (items.length > 0 && items.every((i: any) => i.isLaunched));
+    return !isAllLaunched;
+  }).length;
   const [loginData, setLoginData] = useState({ matricula: '', senha: '' });
   const [showLoginPassword, setShowLoginPassword] = useState(false);
   const [showNewPassword, setShowNewPassword] = useState(false);
@@ -265,9 +266,8 @@ const App: React.FC = () => {
 
   const currentEditingEscala = editingEscalaId ? escalas.find(e => e.id === editingEscalaId) : null;
   const isPastEvent = (() => {
-    if (!currentEditingEscala) return false;
-    const evDate = currentEditingEscala.formData.eventDate;
-    const evTime = currentEditingEscala.formData.eventStartTime;
+    const evDate = state.formData.eventDate || currentEditingEscala?.formData?.eventDate;
+    const evTime = state.formData.eventStartTime || currentEditingEscala?.formData?.eventStartTime;
     if (evDate && evTime) {
        const dt = new Date(`${evDate}T${evTime}`);
        return !isNaN(dt.getTime()) && new Date() >= dt;
@@ -277,8 +277,6 @@ const App: React.FC = () => {
 
   const isEditable = !editingEscalaId || (() => {
     const scale = currentEditingEscala || escalas.find(e => e.id === editingEscalaId);
-    const statusOk = ['em_edicao', 'esclarecimento_solicitado'].includes(scale?.status || 'em_edicao');
-    if (!statusOk) return false;
     
     // Se o usuário for Escalante de outra UBM (e não for ADMIN), não pode editar
     if ((currentUser?.permissoes || []).includes('ESCALANTE') && !(currentUser?.permissoes || []).includes('ADMIN')) {
@@ -294,8 +292,11 @@ const App: React.FC = () => {
       return isCmtOrAux;
     }
     
-    // Para outros documentos (Memorando, Planilha), se o evento já começou, o ESCALANTE não pode mais editar
-    return !(isPastEvent && (currentUser?.permissoes || []).includes('ESCALANTE'));
+    // Para outros documentos (Memorando, Escala/Planilha), o ESCALANTE só pode alterar até o horário de início da escala
+    if (isPastEvent) {
+      return false;
+    }
+    return (currentUser?.permissoes || []).includes('ESCALANTE') || (currentUser?.permissoes || []).includes('ADMIN');
   })();
 
   const [dbStatus, setDbStatus] = useState("Conectando...");
@@ -1298,7 +1299,7 @@ const App: React.FC = () => {
       if (docType.startsWith('ATT-')) {
         const isSub = docType.startsWith('ATT-SUB-');
         const itemId = docType.replace(isSub ? 'ATT-SUB-' : 'ATT-DISP-', '');
-        const item = escala.formData.reportEffectiveItems?.find((i: any) => i.id === itemId);
+        const item = escala.formData.reportEffectiveItems?.find((i: any) => i.id === itemId || i.soldierMf === itemId || i.soldierMatricula === itemId);
         const attachmentUrl = item ? (isSub ? item.substituteAttachment : item.dispensaAttachment) : null;
 
         if (attachmentUrl) {
@@ -1379,13 +1380,32 @@ const App: React.FC = () => {
             authed = true;
          }
        } catch (e) {
-          console.error(e);
-          setNeedsDriveAuth(true);
-          alert("Necessário fazer login no Google para salvar no Drive.");
-          return;
+          console.warn("Drive sign-in skipped:", e);
        }
     }
-    if (!authed) return;
+    if (!authed) {
+       const input = document.createElement('input');
+       input.type = 'file';
+       input.accept = 'application/pdf,image/*';
+       input.onchange = (e: any) => {
+          const file = e.target.files[0];
+          if (!file) return;
+          const reader = new FileReader();
+          reader.onloadend = () => {
+             if (type === 'NS') {
+                handleInputChange('nsAttachment', reader.result as string);
+                handleInputChange('nsAttachmentType', 'local');
+             } else {
+                handleInputChange('bgAttachment', reader.result as string);
+                handleInputChange('bgAttachmentType', 'local');
+             }
+             alert("Arquivo anexado localmente com sucesso!");
+          };
+          reader.readAsDataURL(file);
+       };
+       input.click();
+       return;
+    }
 
     const input = document.createElement('input');
     input.type = 'file';
@@ -1406,7 +1426,18 @@ const App: React.FC = () => {
            alert("Arquivo salvo com sucesso no Drive!");
        } catch(err) {
            console.error(err);
-           alert("Erro ao enviar arquivo para o Google Drive.");
+           alert("Erro ao enviar para o Drive, salvando localmente...");
+           const reader = new FileReader();
+           reader.onloadend = () => {
+              if (type === 'NS') {
+                 handleInputChange('nsAttachment', reader.result as string);
+                 handleInputChange('nsAttachmentType', 'local');
+              } else {
+                 handleInputChange('bgAttachment', reader.result as string);
+                 handleInputChange('bgAttachmentType', 'local');
+              }
+           };
+           reader.readAsDataURL(file);
        }
     };
     input.click();
@@ -1613,6 +1644,34 @@ const App: React.FC = () => {
   const saveEscalaWorkflow = async (novoStatus: string, actionMessage: string, stayOnScreen: boolean = false) => {
     const isNew = !editingEscalaId;
     const currentId = isNew ? Date.now().toString() : editingEscalaId;
+
+    // Check 24h conflicts for all soldiers on roster before proceeding
+    if (novoStatus !== 'em_edicao') {
+      const rosterConflicts: string[] = [];
+      (state.formData.costSheetItems || []).forEach((item: any) => {
+        const res = checkSoldier24hConflict(
+          item.soldierMatricula,
+          state.formData.eventDate,
+          state.formData.eventStartTime,
+          state.formData.memoDatesList,
+          escalas,
+          currentId
+        );
+        if (res.hasConflict) {
+          const cInfo = res.conflictingEscalas.map(c => `${c.escalaName} (${formatAnyDate(c.eventDate)} - ${c.diffHours}h)`).join(', ');
+          rosterConflicts.push(`• ${item.soldierRank} ${item.soldierName} (${item.soldierMatricula}): ${cInfo}`);
+        }
+      });
+
+      if (rosterConflicts.length > 0) {
+        const proceed = window.confirm(
+          `⚠️ ALERTA: Existem militares na escala com intervalo menor que 24 horas entre missões:\n\n` +
+          `${rosterConflicts.join('\n')}\n\n` +
+          `Deseja prosseguir com o salvamento mesmo assim?`
+        );
+        if (!proceed) return;
+      }
+    }
     
     // Identifica o Cmt e Auxiliar dinamicamente da sua planilha
     const comandanteItem = state.formData.costSheetItems.find((i: any) => i.isCommander);
@@ -1666,6 +1725,7 @@ const App: React.FC = () => {
     if (novoStatus === 'atestado') {
         const { uploadBlobToNestedDrive } = await import('./services/driveService');
         const { generateEscalaOnlyPDF, generatePDF } = await import('./utils/pdfGenerator');
+        const { getAccessToken } = await import('./services/authService');
         
         try {
             // Generate the 4 PDFs
@@ -1679,12 +1739,30 @@ const App: React.FC = () => {
                 { blob: generatePDF({ ...state, currentDoc: DocumentType.COST_SHEET }, undefined, true), name: `Planilha_Custos.pdf` }
             ];
 
-            for (const doc of docs) {
-                if (doc.blob) {
-                    await uploadBlobToNestedDrive(doc.blob as Blob, doc.name, 'Extras_app', folderName);
-                }
+            let token = await getAccessToken();
+            if (!token) {
+               try {
+                  const authRes = await googleSignIn();
+                  if (authRes?.accessToken) {
+                     token = authRes.accessToken;
+                     setIsDriveAuthed(true);
+                     setNeedsDriveAuth(false);
+                  }
+               } catch (authErr) {
+                  console.warn("Google Drive sign-in skipped:", authErr);
+               }
             }
-            alert('PDFs gerados e salvos no Google Drive com sucesso.');
+
+            if (token) {
+               for (const doc of docs) {
+                   if (doc.blob) {
+                       await uploadBlobToNestedDrive(doc.blob as Blob, doc.name, 'Extras_app', folderName);
+                   }
+               }
+               alert('PDFs gerados e salvos no Google Drive com sucesso.');
+            } else {
+               alert('Serviço atestado com sucesso! (Nota: A integração com o Google Drive não está ativa, então os PDFs não foram salvos na nuvem automaticamente. Você pode visualizá-los e baixá-los diretamente pelo sistema).');
+            }
 
             // Notify Homologador (If email exists, otherwise system handles notification internally)
             if (novaEscala.homologadorMatricula) {
@@ -1702,9 +1780,9 @@ const App: React.FC = () => {
                 }
             }
 
-        } catch (e) {
-            console.error('Failed to generate or upload PDFs', e);
-            alert('Erro ao salvar os PDFs no Drive. Certifique-se de estar logado.');
+        } catch (e: any) {
+            console.warn('Google Drive saving skipped/failed:', e);
+            alert('Serviço atestado com sucesso! (Nota: Não foi possível salvar cópia no Google Drive: ' + (e.message || 'Drive não conectado') + ')');
         }
     }
 
@@ -1932,6 +2010,142 @@ const App: React.FC = () => {
     setNewCostItem(prev => ({ ...prev, selectedSoldier: s, ubm: s.ubm || UBMS[0] }));
   };
 
+  const checkSoldier24hConflict = (
+    soldierMatricula: string,
+    targetEventDate?: string,
+    targetStartTime?: string,
+    targetDatesList?: string[],
+    allEscalas: any[] = [],
+    currentEscalaId?: string | null
+  ) => {
+    if (!soldierMatricula) return { hasConflict: false, conflictingEscalas: [] };
+
+    const normMatricula = soldierMatricula.trim();
+
+    const parseDateTime = (dStr?: string, tStr?: string): Date | null => {
+      if (!dStr || typeof dStr !== 'string') return null;
+      const cleanDate = dStr.trim();
+      if (!cleanDate) return null;
+
+      let year: number, month: number, day: number;
+
+      if (cleanDate.includes('-')) {
+        const datePart = cleanDate.split('T')[0];
+        const parts = datePart.split('-');
+        if (parts.length === 3) {
+          year = parseInt(parts[0], 10);
+          month = parseInt(parts[1], 10) - 1;
+          day = parseInt(parts[2], 10);
+        } else {
+          return null;
+        }
+      } else if (cleanDate.includes('/')) {
+        const parts = cleanDate.split('/');
+        if (parts.length === 3) {
+          day = parseInt(parts[0], 10);
+          month = parseInt(parts[1], 10) - 1;
+          year = parseInt(parts[2], 10);
+        } else {
+          return null;
+        }
+      } else {
+        const parsed = new Date(cleanDate);
+        if (!isNaN(parsed.getTime())) return parsed;
+        return null;
+      }
+
+      let hours = 0;
+      let minutes = 0;
+      if (tStr && typeof tStr === 'string') {
+        const timeParts = tStr.split(':');
+        if (timeParts.length >= 2) {
+          hours = parseInt(timeParts[0], 10) || 0;
+          minutes = parseInt(timeParts[1], 10) || 0;
+        }
+      }
+
+      const dt = new Date(year, month, day, hours, minutes, 0, 0);
+      return isNaN(dt.getTime()) ? null : dt;
+    };
+
+    const datesToCheck: string[] = [];
+    if (targetEventDate) datesToCheck.push(targetEventDate);
+    if (targetDatesList && Array.isArray(targetDatesList)) {
+      targetDatesList.forEach(d => {
+        if (d && !datesToCheck.includes(d)) datesToCheck.push(d);
+      });
+    }
+
+    if (datesToCheck.length === 0) return { hasConflict: false, conflictingEscalas: [] };
+
+    const conflicts: Array<{
+      escalaId: string;
+      escalaName: string;
+      eventDate: string;
+      eventTime: string;
+      diffHours: number;
+    }> = [];
+
+    allEscalas.forEach(esc => {
+      if (currentEscalaId && esc.id === currentEscalaId) return;
+
+      const inCostSheet = (esc.formData?.costSheetItems || []).some(
+        (item: any) => (item.soldierMatricula || item.soldierMf || '').trim() === normMatricula
+      );
+      const inReport = (esc.formData?.reportEffectiveItems || []).some(
+        (item: any) => (item.soldierMf || item.soldierMatricula || '').trim() === normMatricula
+      );
+      const isCmd = (esc.comandanteMatricula || esc.formData?.issuerMatricula || '').trim() === normMatricula;
+      const isAux = (esc.auxiliarMatricula || '').trim() === normMatricula;
+
+      if (!inCostSheet && !inReport && !isCmd && !isAux) return;
+
+      const otherDates: string[] = [];
+      if (esc.formData?.eventDate) otherDates.push(esc.formData.eventDate);
+      if (Array.isArray(esc.formData?.datesList)) {
+        esc.formData.datesList.forEach((d: string) => {
+          if (d && !otherDates.includes(d)) otherDates.push(d);
+        });
+      }
+      if (Array.isArray(esc.formData?.memoDatesList)) {
+        esc.formData.memoDatesList.forEach((d: string) => {
+          if (d && !otherDates.includes(d)) otherDates.push(d);
+        });
+      }
+
+      const otherStartTime = esc.formData?.eventStartTime || '08:00';
+      const scaleName = esc.formData?.operationName || esc.formData?.eventName || 'Escala sem nome';
+
+      datesToCheck.forEach(tDate => {
+        const targetDt = parseDateTime(tDate, targetStartTime || '08:00');
+        if (!targetDt) return;
+
+        otherDates.forEach(oDate => {
+          const otherDt = parseDateTime(oDate, otherStartTime);
+          if (!otherDt) return;
+
+          const diffMs = Math.abs(targetDt.getTime() - otherDt.getTime());
+          const diffHours = diffMs / (1000 * 60 * 60);
+
+          if (diffHours < 24) {
+            conflicts.push({
+              escalaId: esc.id,
+              escalaName: scaleName,
+              eventDate: oDate,
+              eventTime: otherStartTime,
+              diffHours: Math.round(diffHours * 10) / 10
+            });
+          }
+        });
+      });
+    });
+
+    return {
+      hasConflict: conflicts.length > 0,
+      conflictingEscalas: conflicts
+    };
+  };
+
   const addSoldierToRoster = () => {
     const { selectedSoldier, serviceType, qty, ubm } = newCostItem;
     const soldierName = selectedSoldier?.nome || "Militar Manual";
@@ -1944,29 +2158,29 @@ const App: React.FC = () => {
       return;
     }
 
-    // Interval Check
-    const eventDate = state.formData.eventDate;
-    if (eventDate) {
-        let conflictFound = false;
-        const currentEventStart = new Date(`${eventDate}T${state.formData.eventStartTime || '00:00'}`);
-        escalas.forEach(e => {
-            if (e.id === editingEscalaId) return; // avoid self
-            if (e.status === 'esclarecimento_solicitado' || e.status === 'em_edicao' || e.status === 'atestado' || e.status === 'homologado' || e.status === 'lancado') {
-                const hasSoldier = e.formData.costSheetItems?.some((c:any) => c.soldierMatricula === soldierMatricula);
-                if (hasSoldier && e.formData.eventDate) {
-                    const otherStart = new Date(`${e.formData.eventDate}T${e.formData.eventStartTime || '00:00'}`);
-                    const diffTime = Math.abs(currentEventStart.getTime() - otherStart.getTime());
-                    const diffHours = diffTime / (1000 * 60 * 60);
-                    if (diffHours < 24) {
-                        conflictFound = true;
-                    }
-                }
-            }
-        });
-        if (conflictFound) {
-            const proceed = window.confirm(`CUIDADO: O militar ${soldierName} já está escalado em outra missão com intervalo menor que 24 horas. Deseja escalar mesmo assim?`);
-            if (!proceed) return;
-        }
+    // Interval Check (< 24 horas)
+    const conflictRes = checkSoldier24hConflict(
+      soldierMatricula,
+      state.formData.eventDate,
+      state.formData.eventStartTime,
+      state.formData.memoDatesList,
+      escalas,
+      editingEscalaId
+    );
+
+    if (conflictRes.hasConflict) {
+      const conflictInfo = conflictRes.conflictingEscalas
+        .map(c => `• ${c.escalaName} (Data: ${formatAnyDate(c.eventDate)} às ${c.eventTime} - Intervalo de ${c.diffHours}h)`)
+        .join('\n');
+
+      const proceed = window.confirm(
+        `⚠️ ALERTA DE CONFLITO DE ESCALA (< 24 Horas)\n\n` +
+        `O militar ${soldierRank} ${soldierName} (Matrícula: ${soldierMatricula}) já está escalado em outra missão com intervalo menor que 24 horas:\n\n` +
+        `${conflictInfo}\n\n` +
+        `Deseja confirmar e escalar este militar mesmo assim?`
+      );
+
+      if (!proceed) return;
     }
 
     const newItem: CostSheetItem = {
@@ -2575,7 +2789,10 @@ const App: React.FC = () => {
 
               {(currentUser?.permissoes || []).includes('PAGAMENTO') && (
                 <button onClick={() => setActiveTab('PAGAMENTO')} className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg transition-all ${activeTab === 'PAGAMENTO' ? 'bg-yellow-500 text-cbmpa-900 font-bold' : 'hover:bg-cbmpa-800 text-white'}`}>
-                  <Banknote size={20} /><span>Lançamento</span>
+                  <Banknote size={20} /><span className="flex-1 text-left">Lançamento</span>
+                  {pendingPaymentBatchesCount > 0 && (
+                    <span className="bg-red-500 text-white text-xs px-2 py-0.5 rounded-full font-bold animate-pulse flex items-center justify-center" title={`${pendingPaymentBatchesCount} lote(s) pendente(s)`}>!</span>
+                  )}
                 </button>
               )}
             </>
@@ -4047,7 +4264,10 @@ const App: React.FC = () => {
                               </thead>
                               <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
                                 {(() => {
-                                  const roster = escala.formData.reportEffectiveItems || escala.formData.costSheetItems || [];
+                                  const costSheet = escala.formData.costSheetItems || [];
+                                  const reportEffective = escala.formData.reportEffectiveItems || [];
+                                  const roster = costSheet.length > 0 ? costSheet : reportEffective;
+
                                   if (roster.length === 0) {
                                     return (
                                       <tr>
@@ -4056,16 +4276,24 @@ const App: React.FC = () => {
                                     );
                                   }
                                   return roster.map((item: any, idx: number) => {
-                                    const posto = item.soldierRank || item.posto || '';
-                                    const nome = item.soldierName || item.nome || '';
-                                    const funcao = item.role || item.funcao || 'Prevenção';
-                                    const status = item.status || 'P';
+                                    const effectiveAlt = reportEffective.find((r: any) => r.soldierMf === item.soldierMatricula || r.id === item.id);
+                                    const posto = item.soldierRank || item.posto || effectiveAlt?.soldierRank || '';
+                                    const nome = item.soldierName || item.nome || effectiveAlt?.soldierName || '';
+                                    const funcao = item.isCommander ? 'Comandante' : item.isAuxiliar ? 'Aux. do Cmt' : item.role || item.funcao || 'Prevenção';
+                                    const status = effectiveAlt?.status || item.status || 'P';
 
                                     let statusBadge = <span className="px-2 py-0.5 rounded text-[10px] font-black bg-green-100 text-green-800 dark:bg-green-950/30 dark:text-green-400">● PRESENTE</span>;
-                                    if (status === 'F') statusBadge = <span className="px-2 py-0.5 rounded text-[10px] font-black bg-red-100 text-red-800 dark:bg-red-950/30 dark:text-red-400 animate-pulse">● FALTA</span>;
+                                    if (status === 'F') statusBadge = <span className="px-2 py-0.5 rounded text-[10px] font-black bg-red-100 text-red-800 dark:bg-red-950/30 dark:text-red-400">● FALTA</span>;
                                     if (status === 'D') statusBadge = <span className="px-2 py-0.5 rounded text-[10px] font-black bg-blue-100 text-blue-800 dark:bg-blue-950/30 dark:text-blue-400">● DISPENSA</span>;
                                     if (status === 'A') statusBadge = <span className="px-2 py-0.5 rounded text-[10px] font-black bg-orange-100 text-orange-800 dark:bg-orange-950/30 dark:text-orange-400">● ATRASO</span>;
-                                    if (status === 'P/A') statusBadge = <span className="px-2 py-0.5 rounded text-[10px] font-black bg-yellow-100 text-yellow-800 dark:bg-yellow-950/30 dark:text-yellow-400">● PERMUTA</span>;
+                                    if (status === 'P/A') statusBadge = <span className="px-2 py-0.5 rounded text-[10px] font-black bg-amber-100 text-amber-800 dark:bg-amber-950/30 dark:text-amber-400">● SUBSTITUÍDO</span>;
+
+                                    const subName = effectiveAlt?.substituteName || item.substituteName || 'Não informado';
+                                    const subAttach = effectiveAlt?.substituteAttachment || item.substituteAttachment;
+                                    const dispReason = effectiveAlt?.dispensaReason || item.dispensaReason || 'Não informada';
+                                    const dispAttach = effectiveAlt?.dispensaAttachment || item.dispensaAttachment;
+                                    const faltaJust = effectiveAlt?.faltaJustification || item.faltaJustification || 'Não informada';
+                                    const atrasoJust = effectiveAlt?.atrasoJustification || item.atrasoJustification || 'Não informada';
 
                                     return (
                                       <tr key={item.id || idx} className="hover:bg-gray-50/50 dark:hover:bg-gray-900/40 transition">
@@ -4073,12 +4301,12 @@ const App: React.FC = () => {
                                         <td className="p-2 text-center">{statusBadge}</td>
                                         <td className="p-2 text-gray-600 dark:text-gray-400">{funcao}</td>
                                         <td className="p-2 text-xs">
-                                          {status === 'P/A' && (
+                                          {(status === 'P/A' || subName !== 'Não informado') && (
                                             <div className="space-y-1">
-                                              <div><b>Substituto:</b> {item.substituteName || 'Não informado'}</div>
-                                              {item.substituteAttachment && (
+                                              <div><b>Nome do Substituto:</b> {subName}</div>
+                                              {subAttach && (
                                                 <button
-                                                  onClick={() => openDocumentInNewTab(`ATT-SUB-${item.id}`, escala)}
+                                                  onClick={() => openDocumentInNewTab(`ATT-SUB-${effectiveAlt?.id || item.id}`, escala)}
                                                   className="text-[11px] text-blue-600 hover:underline font-bold flex items-center gap-1 bg-gray-50 dark:bg-gray-700 dark:text-white px-2 py-0.5 rounded border border-gray-200 dark:border-gray-600"
                                                 >
                                                   <ExternalLink size={10} /> Ver Documento Anexado
@@ -4088,10 +4316,10 @@ const App: React.FC = () => {
                                           )}
                                           {status === 'D' && (
                                             <div className="space-y-1">
-                                              <div><b>Dispensa:</b> {item.dispensaReason || 'Não informada'}</div>
-                                              {item.dispensaAttachment && (
+                                              <div><b>Motivo da Dispensa:</b> {dispReason}</div>
+                                              {dispAttach && (
                                                 <button
-                                                  onClick={() => openDocumentInNewTab(`ATT-DISP-${item.id}`, escala)}
+                                                  onClick={() => openDocumentInNewTab(`ATT-DISP-${effectiveAlt?.id || item.id}`, escala)}
                                                   className="text-[11px] text-blue-600 hover:underline font-bold flex items-center gap-1 bg-gray-50 dark:bg-gray-700 dark:text-white px-2 py-0.5 rounded border border-gray-200 dark:border-gray-600"
                                                 >
                                                   <ExternalLink size={10} /> Ver Comprovante Anexado
@@ -4100,10 +4328,10 @@ const App: React.FC = () => {
                                             </div>
                                           )}
                                           {status === 'F' && (
-                                            <div><b>Motivo:</b> {item.faltaJustification || 'Não informada'}</div>
+                                            <div><b>Motivo da Falta:</b> {faltaJust}</div>
                                           )}
                                           {status === 'A' && (
-                                            <div><b>Justificativa:</b> {item.atrasoJustification || 'Não informada'}</div>
+                                            <div><b>Justificativa do Atraso:</b> {atrasoJust}</div>
                                           )}
                                           {status === 'P' && <span className="text-gray-400">-</span>}
                                         </td>
@@ -4433,7 +4661,15 @@ const App: React.FC = () => {
 
             {activeTab === 'PAGAMENTO' && (
               <div className="bg-white dark:bg-gray-800 p-6 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700">
-                <h2 className="text-2xl font-bold mb-4 flex items-center gap-2"><Banknote /> Prontos para Pagamento</h2>
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4 pb-2 border-b border-gray-200 dark:border-gray-700">
+                  <h2 className="text-2xl font-bold flex items-center gap-2"><Banknote /> Prontos para Pagamento</h2>
+                  {pendingPaymentBatchesCount > 0 && (
+                    <span className="bg-amber-100 dark:bg-amber-950/60 text-amber-900 dark:text-amber-300 border border-amber-300 dark:border-amber-700 px-3 py-1 rounded-full text-xs font-bold flex items-center gap-2 shadow-sm">
+                      <span className="bg-red-500 text-white text-xs px-1.5 py-0.2 rounded-full font-black animate-pulse">!</span>
+                      <span>{pendingPaymentBatchesCount} lote(s) pendente(s) de lançamento em folha</span>
+                    </span>
+                  )}
+                </div>
                 {pagamentoEscalaId ? (
                    <div>
                        {(() => {
@@ -4488,7 +4724,7 @@ const App: React.FC = () => {
                                               <tr>
                                                  <th className="p-3 text-left">MF (Matrícula)</th>
                                                  <th className="p-3 text-left">Posto/Graduação</th>
-                                                 <th className="p-3 text-left">Nome do Militar</th>
+                                                 <th className="p-3 text-left">Militar Beneficiário (Pagamento)</th>
                                                  <th className="p-3 text-left">Cargo/Função</th>
                                                  <th className="p-3 text-left">UBM</th>
                                                  <th className="p-3 text-center">Lançamento em Folha</th>
@@ -4498,10 +4734,24 @@ const App: React.FC = () => {
                                               {getEffectiveCostItems(esc.formData).map((item: any, idx: number) => {
                                                   const isL = item.isLaunched;
                                                   return (
-                                                      <tr key={item.id} className="border-b hover:bg-gray-50/50 dark:hover:bg-gray-800/50">
+                                                      <tr key={item.id || idx} className="border-b hover:bg-gray-50/50 dark:hover:bg-gray-800/50">
                                                           <td className="p-3 font-mono text-xs font-bold">{item.soldierMatricula}</td>
                                                           <td className="p-3 font-medium">{item.soldierRank || '-'}</td>
-                                                          <td className="p-3 font-bold text-gray-800 dark:text-gray-100">{item.soldierName}</td>
+                                                          <td className="p-3">
+                                                              <div className="font-bold text-gray-800 dark:text-gray-100 flex items-center gap-1.5">
+                                                                  <span>{item.soldierName}</span>
+                                                                  {item.isSubstituted && (
+                                                                      <span className="bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 text-[10px] px-2 py-0.5 rounded font-bold uppercase border border-amber-200">
+                                                                          Substituto
+                                                                      </span>
+                                                                  )}
+                                                              </div>
+                                                              {item.isSubstituted && (
+                                                                  <div className="text-[11px] text-amber-700 dark:text-amber-400 font-medium mt-0.5">
+                                                                      Substituiu o militar escalado: <strong>{item.originalSoldierRank} {item.originalSoldierName}</strong> (MF: {item.originalSoldierMatricula})
+                                                                  </div>
+                                                              )}
+                                                          </td>
                                                           <td className="p-3">
                                                               <span className={`px-2 py-0.5 rounded text-[11px] font-bold ${item.isCommander ? "bg-yellow-100 text-yellow-800" : item.isAuxiliar ? "bg-blue-100 text-blue-800" : "bg-gray-100 text-gray-800"}`}>
                                                                   {item.isCommander ? 'Comandante' : item.isAuxiliar ? 'Aux. do Cmt' : item.role || 'Militar'}
@@ -4548,8 +4798,15 @@ const App: React.FC = () => {
                    </div>
                 ) : (
                    <div className="space-y-3">
+                     {pendingPaymentBatchesCount > 0 && (
+                       <div className="p-3 bg-amber-50 dark:bg-amber-950/40 border-l-4 border-amber-500 text-amber-900 dark:text-amber-200 text-xs font-bold rounded-r flex items-center gap-2 mb-3 shadow-sm">
+                          <span className="bg-red-500 text-white text-xs px-2 py-0.5 rounded-full font-bold animate-pulse">!</span>
+                          <span>Atenção: Existem {pendingPaymentBatchesCount} lote(s) com lançamentos pendentes para folha de pagamento.</span>
+                       </div>
+                     )}
                      {escalas.filter(e => e.status === 'homologado' || e.status === 'lancado').map(escala => {
-                        const isAllLaunched = escala.status === 'lancado' || (escala.formData.costSheetItems?.length > 0 && escala.formData.costSheetItems.every((i: any) => i.isLaunched));
+                        const effectiveItems = getEffectiveCostItems(escala.formData);
+                        const isAllLaunched = escala.status === 'lancado' || (effectiveItems.length > 0 && effectiveItems.every((i: any) => i.isLaunched));
                         return (
                           <div key={escala.id} className={`p-4 border rounded-lg flex justify-between items-center ${isAllLaunched ? 'border-green-300 bg-green-50/60 dark:bg-green-950/20' : 'border-amber-200 bg-amber-50/50 dark:bg-amber-950/20'}`}>
                             <div>
@@ -4918,7 +5175,7 @@ const App: React.FC = () => {
                       
                       <div className="space-y-4 pt-4 border-t border-gray-200 dark:border-gray-700">
                          <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
-                           <div className="md:col-span-5 relative">
+                           <div className="md:col-span-7 relative">
                                <label className="block text-xs font-bold text-gray-600 dark:text-gray-300 mb-1">BUSCAR MILITAR</label>
                                <input type="text" className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white" placeholder="Matrícula ou Nome..." value={costSearchTerm} onChange={handleCostSearchChange} />
                                {showCostSuggestions && (
@@ -4926,24 +5183,39 @@ const App: React.FC = () => {
                                    {costSuggestions.map(s => <li key={s.matricula} onClick={() => selectCostSoldier(s)} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer text-sm">{s.posto} {s.nome}</li>)}
                                  </ul>
                                )}
+                               {(() => {
+                                 const currentSearchMatricula = newCostItem.selectedSoldier?.matricula || (costSearchTerm.includes('-') ? costSearchTerm.split('-')[0].trim() : costSearchTerm.trim());
+                                 if (!currentSearchMatricula || currentSearchMatricula.length < 2) return null;
+                                 const liveConf = checkSoldier24hConflict(
+                                   currentSearchMatricula,
+                                   state.formData.eventDate,
+                                   state.formData.eventStartTime,
+                                   state.formData.memoDatesList,
+                                   escalas,
+                                   editingEscalaId
+                                 );
+                                 if (!liveConf.hasConflict) return null;
+                                 return (
+                                   <div className="mt-2 p-2.5 bg-amber-50 dark:bg-amber-950/50 border-l-4 border-amber-500 rounded-r text-amber-900 dark:text-amber-200 text-xs shadow-sm">
+                                     <div className="font-bold flex items-center gap-1 text-amber-800 dark:text-amber-300">
+                                       <AlertTriangle size={14} className="text-amber-600 dark:text-amber-400 shrink-0" />
+                                       <span>Atenção: Militar escalado com intervalo menor que 24h</span>
+                                     </div>
+                                     <ul className="mt-1 space-y-0.5 list-disc list-inside text-[11px]">
+                                       {liveConf.conflictingEscalas.map((c, idx) => (
+                                         <li key={idx}>
+                                           Escala <strong>{c.escalaName}</strong> em {formatAnyDate(c.eventDate)} às {c.eventTime} (intervalo de {c.diffHours}h)
+                                         </li>
+                                       ))}
+                                     </ul>
+                                   </div>
+                                 );
+                               })()}
                            </div>
-                           <div className="md:col-span-2">
+                           <div className="md:col-span-3">
                                 <label className="block text-xs font-bold text-gray-600 dark:text-gray-300 mb-1">UBM</label>
                                 <select className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white" value={newCostItem.ubm} onChange={(e) => setNewCostItem({...newCostItem, ubm: e.target.value})}>
                                    {UBMS.map(u => <option key={u} value={u}>{u}</option>)}
-                                </select>
-                           </div>
-                           <div className="md:col-span-3">
-                                <label className="block text-xs font-bold text-gray-600 dark:text-gray-300 mb-1">TIPO DE SERVIÇO</label>
-                                <select 
-                                  className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white text-xs font-semibold"
-                                  value={newCostItem.serviceType || state.formData.serviceType || 'PREVENCAO'}
-                                  onChange={(e) => setNewCostItem({...newCostItem, serviceType: e.target.value})}
-                                >
-                                  <option value="PREVENCAO">Prevenção Desportiva</option>
-                                  <option value="DIVERSOS">Serviços Diversos</option>
-                                  <option value="GUARDA_VIDAS">Guarda Vidas</option>
-                                  <option value="CORTE_VEGETAL">Corte de Vegetal</option>
                                 </select>
                            </div>
                            <div className="md:col-span-2 flex items-end">
@@ -4970,7 +5242,6 @@ const App: React.FC = () => {
                                    <th className="p-2.5 text-left text-xs">MATRÍCULA</th>
                                    <th className="p-2.5 text-left text-xs">MILITAR</th>
                                    <th className="p-2.5 text-left text-xs">FUNÇÃO</th>
-                                   <th className="p-2.5 text-left text-xs">TIPO DE SERVIÇO</th>
                                    <th className="p-2.5 text-center text-xs">AÇÃO</th>
                                 </tr>
                              </thead>
@@ -4979,34 +5250,35 @@ const App: React.FC = () => {
                                    <tr key={item.id} className={`border-b border-gray-100 dark:border-gray-700 ${item.isCommander ? "bg-yellow-50 dark:bg-yellow-950/20" : item.isAuxiliar ? "bg-blue-50 dark:bg-blue-950/20" : ""}`}>
                                       <td className="p-2.5 text-xs font-mono">{item.soldierMatricula}</td>
                                       <td className="p-2.5">
-                                        <div className="font-bold text-gray-900 dark:text-gray-100 text-xs">{item.soldierRank} {item.soldierName}</div>
+                                        <div className="font-bold text-gray-900 dark:text-gray-100 text-xs flex items-center flex-wrap gap-1">
+                                          <span>{item.soldierRank} {item.soldierName}</span>
+                                          {(() => {
+                                            const itemConf = checkSoldier24hConflict(
+                                              item.soldierMatricula,
+                                              state.formData.eventDate,
+                                              state.formData.eventStartTime,
+                                              state.formData.memoDatesList,
+                                              escalas,
+                                              editingEscalaId
+                                            );
+                                            if (!itemConf.hasConflict) return null;
+                                            return (
+                                              <span 
+                                                title={`Escalado em: ${itemConf.conflictingEscalas.map(c => `${c.escalaName} (${formatAnyDate(c.eventDate)} - ${c.diffHours}h)`).join(', ')}`}
+                                                className="inline-flex items-center gap-1 bg-amber-100 text-amber-800 dark:bg-amber-900/60 dark:text-amber-200 text-[10px] px-1.5 py-0.5 rounded font-bold uppercase cursor-help border border-amber-300 dark:border-amber-700"
+                                              >
+                                                <AlertTriangle size={11} className="text-amber-600 dark:text-amber-400" />
+                                                Intervalo &lt; 24h
+                                              </span>
+                                            );
+                                          })()}
+                                        </div>
                                         <div className="text-[10px] text-gray-500">{item.soldierUbm}</div>
                                       </td>
                                       <td className="p-2.5">
                                          <select className="w-full p-1.5 border rounded dark:bg-gray-700 text-xs dark:border-gray-600 dark:text-white" value={item.role || (item.isCommander ? 'Comandante' : item.isAuxiliar ? 'Aux. do Cmt' : '')} onChange={(e) => updateRole(item.id, e.target.value, 'COST')}>
                                             <option value="">Selecione...</option>
                                             {ROLES.map(r => <option key={r} value={r}>{r}</option>)}
-                                         </select>
-                                      </td>
-                                      <td className="p-2.5">
-                                         <select 
-                                           className="w-full p-1.5 border rounded dark:bg-gray-700 text-xs dark:border-gray-600 dark:text-white font-medium"
-                                           value={item.serviceType || 'PREVENCAO'}
-                                           onChange={(e) => {
-                                             const newType = e.target.value;
-                                             setState(prev => ({
-                                               ...prev,
-                                               formData: {
-                                                 ...prev.formData,
-                                                 costSheetItems: prev.formData.costSheetItems.map(i => i.id === item.id ? { ...i, serviceType: newType as any } : i)
-                                               }
-                                             }));
-                                           }}
-                                         >
-                                           <option value="PREVENCAO">Prevenção Desportiva</option>
-                                           <option value="DIVERSOS">Serviços Diversos</option>
-                                           <option value="GUARDA_VIDAS">Guarda Vidas</option>
-                                           <option value="CORTE_VEGETAL">Corte de Vegetal</option>
                                          </select>
                                       </td>
                                       <td className="p-2.5 text-center">
@@ -5640,10 +5912,20 @@ const App: React.FC = () => {
 
         {/* Modal de Consulta de Escala (Totalmente Read-Only) */}
         {consultingEscalaId && (
-          (() => {
+                    (() => {
             const esc = escalas.find(e => e.id === consultingEscalaId);
             if (!esc) return null;
             const formattedDate = esc.formData.eventDate ? formatAnyDate(esc.formData.eventDate) : 'N/A';
+            const isCommanderOrManager = 
+              esc.comandanteMatricula === currentUser?.matricula || 
+              esc.formData.issuerMatricula === currentUser?.matricula ||
+              esc.escalanteMatricula === currentUser?.matricula ||
+              (currentUser?.permissoes || []).some((p: string) => ['ADMIN', 'ESCALANTE', 'HOMOLOGADOR', 'PAGAMENTO'].includes(p));
+
+            const isRegularEscalado = 
+              !isCommanderOrManager && 
+              (esc.formData.costSheetItems || []).some((m: any) => m.soldierMatricula === currentUser?.matricula);
+
             return (
               <div className="fixed inset-0 z-50 overflow-y-auto bg-black/60 backdrop-blur-sm p-4 sm:p-6 flex justify-center items-start">
                 <div className="bg-white dark:bg-gray-800 p-6 rounded-xl w-full max-w-4xl shadow-2xl border border-gray-200 dark:border-gray-700 my-4 sm:my-8">
@@ -5685,108 +5967,167 @@ const App: React.FC = () => {
                       </div>
                    </div>
 
-                   {/* Links para os Documentos Finais do App */}
-                   <div className="mb-6 p-4 bg-red-50/30 dark:bg-red-950/10 rounded-lg border border-red-100 dark:border-red-900/30">
-                      <span className="text-xs font-bold text-red-700 dark:text-red-400 uppercase tracking-wider block mb-3">Documentos Oficiais Gerados</span>
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                         <button onClick={() => openDocumentInNewTab('MEMO', esc)} className="bg-white hover:bg-gray-50 dark:bg-gray-900 dark:border-gray-700 border text-gray-700 dark:text-gray-200 p-2.5 rounded font-bold text-xs flex items-center justify-center gap-2 shadow-sm transition"><FileText size={14} className="text-red-600"/> Memorando</button>
-                         <button onClick={() => openDocumentInNewTab('ESCALA', esc)} className="bg-white hover:bg-gray-50 dark:bg-gray-900 dark:border-gray-700 border text-gray-700 dark:text-gray-200 p-2.5 rounded font-bold text-xs flex items-center justify-center gap-2 shadow-sm transition"><FileText size={14} className="text-blue-600"/> Escala</button>
-                         
-                         {(() => {
-                            const isAvailable = esc.status === 'atestado' || esc.status === 'homologado' || esc.status === 'lancado';
-                            return (
-                               <>
-                                 <button 
-                                   disabled={!isAvailable} 
-                                   title={isAvailable ? "" : "Disponível apenas após o Atestado de Execução"}
-                                   onClick={() => openDocumentInNewTab('RELATORIO', esc)} 
-                                   className={`bg-white dark:bg-gray-900 border text-gray-700 dark:text-gray-200 p-2.5 rounded font-bold text-xs flex items-center justify-center gap-2 shadow-sm transition ${isAvailable ? 'hover:bg-gray-50 dark:border-gray-700' : 'opacity-40 cursor-not-allowed border-gray-100'}`}
-                                 >
-                                   <FileText size={14} className={isAvailable ? "text-green-600" : "text-gray-400"}/> 
-                                   Relatório
-                                 </button>
-                                 <button 
-                                   disabled={!isAvailable} 
-                                   title={isAvailable ? "" : "Disponível apenas após o Atestado de Execução"}
-                                   onClick={() => openDocumentInNewTab('CUSTOS', esc)} 
-                                   className={`bg-white dark:bg-gray-900 border text-gray-700 dark:text-gray-200 p-2.5 rounded font-bold text-xs flex items-center justify-center gap-2 shadow-sm transition ${isAvailable ? 'hover:bg-gray-50 dark:border-gray-700' : 'opacity-40 cursor-not-allowed border-gray-100'}`}
-                                 >
-                                   <FileText size={14} className={isAvailable ? "text-purple-600" : "text-gray-400"}/> 
-                                   Planilha Custos
-                                 </button>
-                               </>
-                            );
-                         })()}
+                   {/* Nos perfis dos militares escalados (regular), exibe apenas o botão de acesso à escala */}
+                   {isRegularEscalado ? (
+                      <div className="mb-6 p-4 bg-blue-50/60 dark:bg-blue-950/20 rounded-lg border border-blue-200 dark:border-blue-900/40 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-sm">
+                         <div>
+                            <span className="text-xs font-bold text-blue-800 dark:text-blue-300 uppercase tracking-wider block">Documento da Escala</span>
+                            <p className="text-xs text-gray-600 dark:text-gray-300 mt-0.5">Acesse a escala oficial em que esteve escalado.</p>
+                         </div>
+                         <button 
+                            onClick={() => openDocumentInNewTab('ESCALA', esc)} 
+                            className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-lg font-bold text-xs flex items-center justify-center gap-2 shadow transition shrink-0"
+                         >
+                            <FileText size={16}/> Visualizar Escala (PDF)
+                         </button>
                       </div>
-                   </div>
+                   ) : (
+                      <>
+                         {/* Links para os Documentos Finais do App */}
+                         <div className="mb-6 p-4 bg-red-50/30 dark:bg-red-950/10 rounded-lg border border-red-100 dark:border-red-900/30">
+                            <span className="text-xs font-bold text-red-700 dark:text-red-400 uppercase tracking-wider block mb-3">Documentos Oficiais Gerados</span>
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                               <button onClick={() => openDocumentInNewTab('MEMO', esc)} className="bg-white hover:bg-gray-50 dark:bg-gray-900 dark:border-gray-700 border text-gray-700 dark:text-gray-200 p-2.5 rounded font-bold text-xs flex items-center justify-center gap-2 shadow-sm transition"><FileText size={14} className="text-red-600"/> Memorando</button>
+                               <button onClick={() => openDocumentInNewTab('ESCALA', esc)} className="bg-white hover:bg-gray-50 dark:bg-gray-900 dark:border-gray-700 border text-gray-700 dark:text-gray-200 p-2.5 rounded font-bold text-xs flex items-center justify-center gap-2 shadow-sm transition"><FileText size={14} className="text-blue-600"/> Escala</button>
+                               
+                               {(() => {
+                                  const isAvailable = esc.status === 'atestado' || esc.status === 'homologado' || esc.status === 'lancado';
+                                  return (
+                                     <>
+                                       <button 
+                                         disabled={!isAvailable} 
+                                         title={isAvailable ? "" : "Disponível apenas após o Atestado de Execução"}
+                                         onClick={() => openDocumentInNewTab('RELATORIO', esc)} 
+                                         className={`bg-white dark:bg-gray-900 border text-gray-700 dark:text-gray-200 p-2.5 rounded font-bold text-xs flex items-center justify-center gap-2 shadow-sm transition ${isAvailable ? 'hover:bg-gray-50 dark:border-gray-700' : 'opacity-40 cursor-not-allowed border-gray-100'}`}
+                                       >
+                                         <FileText size={14} className={isAvailable ? "text-green-600" : "text-gray-400"}/> 
+                                         Relatório
+                                       </button>
+                                       <button 
+                                         disabled={!isAvailable} 
+                                         title={isAvailable ? "" : "Disponível apenas após o Atestado de Execução"}
+                                         onClick={() => openDocumentInNewTab('CUSTOS', esc)} 
+                                         className={`bg-white dark:bg-gray-900 border text-gray-700 dark:text-gray-200 p-2.5 rounded font-bold text-xs flex items-center justify-center gap-2 shadow-sm transition ${isAvailable ? 'hover:bg-gray-50 dark:border-gray-700' : 'opacity-40 cursor-not-allowed border-gray-100'}`}
+                                       >
+                                         <FileText size={14} className={isAvailable ? "text-purple-600" : "text-gray-400"}/> 
+                                         Planilha Custos
+                                       </button>
+                                     </>
+                                  );
+                               })()}
+                            </div>
+                         </div>
 
-                   {/* Efetivo militar */}
-                   <div className="mb-6">
-                    {/* Registro de Assinaturas e Autenticidade Digital */}
-                    {(esc.escalaApprovalLabel || esc.executionApprovalLabel || esc.homologationLabel || esc.paymentLaunchLabel) && (
-                       <div className="mb-6 p-4 bg-gray-50 dark:bg-gray-900/60 rounded-lg border border-gray-200 dark:border-gray-700">
-                          <span className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider block mb-3">Registro de Autenticação Digital (Rastreabilidade)</span>
-                          <div className="space-y-2.5 text-xs font-mono">
-                             {esc.escalaApprovalLabel && (
-                                <div className="flex items-start gap-2 text-gray-700 dark:text-gray-300">
-                                   <span className="bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300 px-2 py-0.5 rounded font-bold uppercase text-[10px] shrink-0">[ESCALA]</span>
-                                   <span className="mt-0.5">{esc.escalaApprovalLabel}</span>
-                                </div>
-                             )}
-                             {esc.executionApprovalLabel && (
-                                <div className="flex items-start gap-2 text-gray-700 dark:text-gray-300">
-                                   <span className="bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 px-2 py-0.5 rounded font-bold uppercase text-[10px] shrink-0">[RELATÓRIO]</span>
-                                   <span className="mt-0.5">{esc.executionApprovalLabel}</span>
-                                </div>
-                             )}
-                             {esc.homologationLabel && (
-                                <div className="flex items-start gap-2 text-gray-700 dark:text-gray-300">
-                                   <span className="bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300 px-2 py-0.5 rounded font-bold uppercase text-[10px] shrink-0">[HOMOLOGAÇÃO]</span>
-                                   <span className="mt-0.5">{esc.homologationLabel}</span>
-                                </div>
-                             )}
-                             {esc.paymentLaunchLabel && (
-                                <div className="flex items-start gap-2 text-gray-700 dark:text-gray-300">
-                                   <span className="bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-300 px-2 py-0.5 rounded font-bold uppercase text-[10px] shrink-0">[LANÇAMENTO]</span>
-                                   <span className="mt-0.5">{esc.paymentLaunchLabel}</span>
-                                </div>
-                             )}
-                          </div>
-                       </div>
-                    )}
+                         {/* Efetivo militar */}
+                         <div className="mb-6">
+                            {/* Registro de Assinaturas e Autenticidade Digital */}
+                            {(esc.escalaApprovalLabel || esc.executionApprovalLabel || esc.homologationLabel || esc.paymentLaunchLabel) && (
+                               <div className="mb-6 p-4 bg-gray-50 dark:bg-gray-900/60 rounded-lg border border-gray-200 dark:border-gray-700">
+                                  <span className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider block mb-3">Registro de Autenticação Digital (Rastreabilidade)</span>
+                                  <div className="space-y-2.5 text-xs font-mono">
+                                     {esc.escalaApprovalLabel && (
+                                        <div className="flex items-start gap-2 text-gray-700 dark:text-gray-300">
+                                           <span className="bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300 px-2 py-0.5 rounded font-bold uppercase text-[10px] shrink-0">[ESCALA]</span>
+                                           <span className="mt-0.5">{esc.escalaApprovalLabel}</span>
+                                        </div>
+                                     )}
+                                     {esc.executionApprovalLabel && (
+                                        <div className="flex items-start gap-2 text-gray-700 dark:text-gray-300">
+                                           <span className="bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 px-2 py-0.5 rounded font-bold uppercase text-[10px] shrink-0">[RELATÓRIO]</span>
+                                           <span className="mt-0.5">{esc.executionApprovalLabel}</span>
+                                        </div>
+                                     )}
+                                     {esc.homologationLabel && (
+                                        <div className="flex items-start gap-2 text-gray-700 dark:text-gray-300">
+                                           <span className="bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300 px-2 py-0.5 rounded font-bold uppercase text-[10px] shrink-0">[HOMOLOGAÇÃO]</span>
+                                           <span className="mt-0.5">{esc.homologationLabel}</span>
+                                        </div>
+                                     )}
+                                     {esc.paymentLaunchLabel && (
+                                        <div className="flex items-start gap-2 text-gray-700 dark:text-gray-300">
+                                           <span className="bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-300 px-2 py-0.5 rounded font-bold uppercase text-[10px] shrink-0">[LANÇAMENTO]</span>
+                                           <span className="mt-0.5">{esc.paymentLaunchLabel}</span>
+                                        </div>
+                                     )}
+                                  </div>
+                               </div>
+                            )}
 
-                      <h4 className="font-bold text-sm text-gray-700 dark:text-gray-300 mb-2 border-b pb-1">Militares Escalados</h4>
-                      <div className="max-h-60 overflow-y-auto border dark:border-gray-700 rounded-lg">
-                         <table className="w-full text-xs text-left">
-                            <thead className="bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 font-bold uppercase">
-                               <tr>
-                                  <th className="p-2">MF (Matrícula)</th>
-                                  <th className="p-2">Posto/Graduação</th>
-                                  <th className="p-2">Nome do Militar</th>
-                                  <th className="p-2">Função</th>
-                                  <th className="p-2 text-center">Status de Lançamento</th>
-                               </tr>
-                            </thead>
-                            <tbody>
-                               {(esc.formData.costSheetItems || []).map((m: any) => (
-                                  <tr key={m.id} className="border-b dark:border-gray-700 hover:bg-gray-50/50 dark:hover:bg-gray-900/40">
-                                     <td className="p-2 font-mono">{m.soldierMatricula}</td>
-                                     <td className="p-2">{m.soldierRank}</td>
-                                     <td className="p-2 font-bold">{m.soldierName}</td>
-                                     <td className="p-2">{m.isCommander ? 'Comandante' : m.isAuxiliar ? 'Aux. do Cmt' : m.role || 'Militar'}</td>
-                                     <td className="p-2 text-center">
-                                        {m.isLaunched ? (
-                                           <span className="bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300 px-2 py-0.5 rounded text-[10px] font-bold uppercase">Lançado</span>
-                                        ) : (
-                                           <span className="bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 px-2 py-0.5 rounded text-[10px] font-bold uppercase">Pendente</span>
-                                        )}
-                                     </td>
-                                  </tr>
-                               ))}
-                            </tbody>
-                         </table>
-                      </div>
-                   </div>
+                            <h4 className="font-bold text-sm text-gray-700 dark:text-gray-300 mb-2 border-b pb-1">Militares Escalados (Efetivo e Alterações do Serviço Executado)</h4>
+                            <div className="max-h-72 overflow-y-auto border dark:border-gray-700 rounded-lg">
+                               <table className="w-full text-xs text-left">
+                                  <thead className="bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 font-bold uppercase sticky top-0">
+                                     <tr>
+                                        <th className="p-2">MF (Matrícula)</th>
+                                        <th className="p-2">Posto/Graduação</th>
+                                        <th className="p-2">Nome do Militar Escalado</th>
+                                        <th className="p-2">Função</th>
+                                        <th className="p-2">Situação / Observações</th>
+                                        <th className="p-2 text-center">Status de Lançamento</th>
+                                     </tr>
+                                  </thead>
+                                  <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
+                                     {(() => {
+                                        const costSheet = esc.formData.costSheetItems || [];
+                                        const reportEffective = esc.formData.reportEffectiveItems || [];
+                                        const roster = costSheet.length > 0 ? costSheet : reportEffective;
+
+                                        if (roster.length === 0) {
+                                           return (
+                                              <tr>
+                                                 <td colSpan={6} className="p-4 text-center text-gray-500 italic">Nenhum militar cadastrado nesta escala.</td>
+                                              </tr>
+                                           );
+                                        }
+
+                                        return roster.map((m: any, idx: number) => {
+                                           const reportAlt = reportEffective.find((r: any) => r.soldierMf === m.soldierMatricula || r.id === m.id);
+                                           const status = reportAlt?.status || m.status || 'P';
+
+                                           let statusBadge = <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-green-100 text-green-800 dark:bg-green-950/30 dark:text-green-400">● PRESENTE</span>;
+                                           let obsText = "-";
+
+                                           if (status === 'F') {
+                                              statusBadge = <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-red-100 text-red-800 dark:bg-red-950/30 dark:text-red-400">● FALTA</span>;
+                                              obsText = reportAlt?.faltaJustification ? `Justificativa: ${reportAlt.faltaJustification}` : "Falta registrada sem justificativa";
+                                           } else if (status === 'D') {
+                                              statusBadge = <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-blue-100 text-blue-800 dark:bg-blue-950/30 dark:text-blue-400">● DISPENSA</span>;
+                                              obsText = `Motivo da Dispensa: ${reportAlt?.dispensaReason || 'Motivo não informado'}`;
+                                           } else if (status === 'P/A' || reportAlt?.substituteName) {
+                                              statusBadge = <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800 dark:bg-amber-950/30 dark:text-amber-400">● SUBSTITUÍDO</span>;
+                                              obsText = `Substituído por: ${reportAlt?.substituteName || 'Substituto não informado'}`;
+                                           } else if (status === 'A') {
+                                              statusBadge = <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-yellow-100 text-yellow-800 dark:bg-yellow-950/30 dark:text-yellow-400">● ATRASO</span>;
+                                              obsText = `Atraso: ${reportAlt?.atrasoJustification || 'Não informado'}`;
+                                           }
+
+                                           return (
+                                              <tr key={m.id || idx} className="hover:bg-gray-50/50 dark:hover:bg-gray-900/40 transition">
+                                                 <td className="p-2 font-mono text-gray-700 dark:text-gray-300">{m.soldierMatricula || m.soldierMf}</td>
+                                                 <td className="p-2 text-gray-800 dark:text-gray-200">{m.soldierRank}</td>
+                                                 <td className="p-2 font-bold text-gray-900 dark:text-white">{m.soldierName}</td>
+                                                 <td className="p-2 text-gray-600 dark:text-gray-400">{m.isCommander ? 'Comandante' : m.isAuxiliar ? 'Aux. do Cmt' : m.role || 'Militar'}</td>
+                                                 <td className="p-2">
+                                                    <div className="flex items-center gap-1.5 mb-0.5">{statusBadge}</div>
+                                                    <div className="text-[11px] text-gray-600 dark:text-gray-300 font-medium">{obsText}</div>
+                                                 </td>
+                                                 <td className="p-2 text-center">
+                                                    {m.isLaunched ? (
+                                                       <span className="bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300 px-2 py-0.5 rounded text-[10px] font-bold uppercase">Lançado</span>
+                                                    ) : (
+                                                       <span className="bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 px-2 py-0.5 rounded text-[10px] font-bold uppercase">Pendente</span>
+                                                    )}
+                                                 </td>
+                                              </tr>
+                                           );
+                                        });
+                                     })()}
+                                  </tbody>
+                               </table>
+                            </div>
+                         </div>
+                      </>
+                   )}
 
                    <div className="flex justify-end gap-2 border-t pt-4 dark:border-gray-700">
                       <button onClick={() => setConsultingEscalaId(null)} className="px-6 py-2 bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-white rounded-lg font-bold hover:bg-gray-200 dark:hover:bg-gray-600 text-sm transition">Fechar Consulta</button>
