@@ -116,6 +116,20 @@ export const getUbmOrigemFullName = (ubm: string): string => {
   return u;
 };
 
+const formatDateShortDDMM = (dStr: string) => {
+  if (!dStr) return '';
+  const clean = dStr.trim();
+  if (clean.includes('/')) {
+    const parts = clean.split('/');
+    if (parts.length >= 2) return `${parts[0].padStart(2, '0')}/${parts[1].padStart(2, '0')}`;
+  }
+  if (clean.includes('-')) {
+    const parts = clean.split('-');
+    if (parts.length === 3) return `${parts[2].padStart(2, '0')}/${parts[1].padStart(2, '0')}`;
+  }
+  return clean;
+};
+
 const addCbmpaHeader = (doc: any, isLandscape = false, fontSizeOverride?: number, state?: AppState) => {
   const centerX = isLandscape ? 148.5 : 105;
   
@@ -157,17 +171,88 @@ const formatDateFull = (dateStr: string) => {
 
 const formatDate = (dateStr: string) => {
   if (!dateStr) return "";
-  const parts = dateStr.split('-');
+  const clean = dateStr.trim();
+  if (clean.includes('/')) return clean;
+  const parts = clean.split('-');
   if (parts.length === 2) {
     const months = ["JANEIRO", "FEVEREIRO", "MARÇO", "ABRIL", "MAIO", "JUNHO", "JULHO", "AGOSTO", "SETEMBRO", "OUTUBRO", "NOVEMBRO", "DEZEMBRO"];
-    return `${months[parseInt(parts[1]) - 1]}/${parts[0]}`;
+    const idx = parseInt(parts[1], 10) - 1;
+    return `${months[idx] || parts[1]}/${parts[0]}`;
   }
-  const [y, m, d] = parts;
-  return `${d}/${m}/${y}`;
+  if (parts.length === 3) {
+    const [y, m, d] = parts;
+    return `${d.padStart(2, '0')}/${m.padStart(2, '0')}/${y}`;
+  }
+  return clean;
 };
 
 const formatCurrency = (val: number) => {
   return val.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+};
+
+const getDatesInRangeForPDF = (startStr?: string, endStr?: string) => {
+  if (!startStr || !endStr) return [];
+  try {
+    const current = new Date(startStr + 'T00:00:00');
+    const end = new Date(endStr + 'T00:00:00');
+    if (isNaN(current.getTime()) || isNaN(end.getTime()) || current > end) return [];
+    
+    const dates: { iso: string; formatted: string; weekDay: string }[] = [];
+    const daysOfWeek = ['DOMINGO', 'SEGUNDA-FEIRA', 'TERÇA-FEIRA', 'QUARTA-FEIRA', 'QUINTA-FEIRA', 'SEXTA-FEIRA', 'SÁBADO'];
+    let count = 0;
+    while (current <= end && count < 62) {
+      const iso = current.toISOString().split('T')[0];
+      const day = String(current.getDate()).padStart(2, '0');
+      const month = String(current.getMonth() + 1).padStart(2, '0');
+      const year = current.getFullYear();
+      const formatted = `${day}/${month}/${year}`;
+      const weekDay = daysOfWeek[current.getDay()];
+      dates.push({ iso, formatted, weekDay });
+      current.setDate(current.getDate() + 1);
+      count++;
+    }
+    return dates;
+  } catch {
+    return [];
+  }
+};
+
+const isDateMatchForPDF = (itemDateStr: string, targetDay: { iso: string; formatted: string }) => {
+  if (!itemDateStr) return false;
+  const clean = itemDateStr.trim();
+  if (!clean) return false;
+  if (clean === targetDay.formatted || clean === targetDay.iso) return true;
+
+  if (clean.includes('-')) {
+    const [y, m, day] = clean.split('-');
+    if (y && m && day) {
+      const formattedFromIso = `${day.padStart(2, '0')}/${m.padStart(2, '0')}/${y}`;
+      if (formattedFromIso === targetDay.formatted) return true;
+    }
+  } else if (clean.includes('/')) {
+    const parts = clean.split('/');
+    if (parts.length === 2) {
+      const shortTarget = targetDay.formatted.substring(0, 5);
+      if (`${parts[0].padStart(2, '0')}/${parts[1].padStart(2, '0')}` === shortTarget) return true;
+    } else if (parts.length === 3) {
+      const formattedFromSlash = `${parts[0].padStart(2, '0')}/${parts[1].padStart(2, '0')}/${parts[2]}`;
+      if (formattedFromSlash === targetDay.formatted) return true;
+    }
+  }
+  return false;
+};
+
+const getShiftForDayForPDF = (item: any, targetDay: { iso: string; formatted: string }) => {
+  if (!item.dayShifts) return item.shift || '1º Turno';
+  if (item.dayShifts[targetDay.formatted]) return item.dayShifts[targetDay.formatted];
+  if (item.dayShifts[targetDay.iso]) return item.dayShifts[targetDay.iso];
+  
+  for (const k of Object.keys(item.dayShifts)) {
+    if (isDateMatchForPDF(k, targetDay)) {
+      return item.dayShifts[k];
+    }
+  }
+  return item.shift || '1º Turno';
 };
 
 const toTitleCase = (str: string) => {
@@ -250,13 +335,21 @@ export const addTraceabilityFooters = (doc: any, isLandscape: boolean, extraData
 
 import { getEffectiveCostItems } from "./costHelpers";
 
-export const generateEscalaOnlyPDF = (state: AppState, returnBlob: boolean = false, escalante?: any, escalaApprovalLabel?: string) => {
+export const generateEscalaOnlyPDF = (
+  state: AppState, 
+  returnBlob: boolean = false, 
+  escalante?: any, 
+  escalaApprovalLabel?: string,
+  periodFilter?: { startDate?: string; endDate?: string }
+) => {
   const { formData } = state;
   const doc = new jsPDF();
   addCbmpaHeader(doc, false, 9, state);
   
+  const isContinuousService = formData.serviceType === 'DIVERSOS';
+
   // Faixa de título destacada
-  const title = `PREVENÇÃO DURANTE O EVENTO ${formData.operationName?.toUpperCase() || formData.eventName?.toUpperCase() || ''}`;
+  const title = `PREVENÇÃO DURANTE O EVENTO ${formData.operationName?.toUpperCase() || formData.servicoDiversosSubTipo?.toUpperCase() || formData.eventName?.toUpperCase() || ''}`;
   doc.setFillColor(248, 218, 69);
   doc.rect(14, 30, 182, 8, 'F');
   doc.setFont("helvetica", "bold");
@@ -270,63 +363,235 @@ export const generateEscalaOnlyPDF = (state: AppState, returnBlob: boolean = fal
   doc.text("LOCAL:", 14, 45);
   doc.setFont("helvetica", "normal");
   doc.text(formData.eventLocal || '-', 30, 45);
-  
-  doc.setFont("helvetica", "bold");
-  doc.text("HORÁRIO:", 14, 50);
-  doc.setFont("helvetica", "normal");
-  doc.text(`${formData.eventStartTime || '-'} às ${formData.eventEndTime || '-'}`, 34, 50);
 
-  doc.setFont("helvetica", "bold");
-  doc.text("UNIFORME:", 14, 55);
-  doc.setFont("helvetica", "normal");
-  doc.text(formData.uniform || "4º A - PRONTIDÃO COMPLETO;", 36, 55);
+  let currentY = 50;
 
-  // Subtítulo de data/turno
-  doc.setFillColor(240, 240, 240);
-  doc.rect(14, 60, 182, 6, 'F');
-  doc.setFont("helvetica", "bold");
-  const endTimeStr = formData.eventEndTime ? `ÀS ${formData.eventEndTime}` : 'AO TÉRMINO DO EVENTO';
-  doc.text(`${formatDateFull(formData.eventDate)} - TURNO (${formData.eventStartTime || '-'} ${endTimeStr})`, 105, 64, { align: 'center' });
+  if (isContinuousService) {
+    doc.setFont("helvetica", "bold");
+    doc.text("TURNOS:", 14, currentY);
+    doc.setFont("helvetica", "normal");
+    
+    const shiftsText = (formData.shifts && formData.shifts.length > 0)
+      ? formData.shifts.map((s, idx) => `${s.name || `${idx + 1}º Turno`}: ${s.startTime || '07:00'} às ${s.endTime || '13:00'}`).join(' | ')
+      : '1º Turno: 07:00 às 13:00 | 2º Turno: 13:00 às 19:00';
+    
+    const splitShifts = doc.splitTextToSize(shiftsText, 150);
+    doc.text(splitShifts, 32, currentY);
+    currentY += (splitShifts.length * 4.5) + 1.5;
 
-  // Tabela
-  const tableData: any = [];
-  (formData.costSheetItems || []).forEach((item, index) => {
-    let roleStr = item.role || (item.isCommander ? 'CMT' : (item.isAuxiliar ? 'AUXILIAR' : 'PREVENÇÃO'));
+    doc.setFont("helvetica", "bold");
+    doc.text("PERÍODO:", 14, currentY);
+    doc.setFont("helvetica", "normal");
+    
+    const filterStart = periodFilter?.startDate;
+    const filterEnd = periodFilter?.endDate;
+    const isFilteredPeriod = Boolean(filterStart || filterEnd);
+
+    const pIni = filterStart ? formatDate(filterStart) : (formData.periodoInicio ? formatDate(formData.periodoInicio) : '-');
+    const pFim = filterEnd ? formatDate(filterEnd) : (formData.periodoFim ? formatDate(formData.periodoFim) : '-');
+    const refM = formData.referenciaMes ? ` | MÊS DE REF: ${formData.referenciaMes}` : '';
+    const partialLabel = isFilteredPeriod ? ' (DIVULGAÇÃO DO PERÍODO DA TROPA)' : '';
+
+    doc.text(`${pIni} A ${pFim}${refM}${partialLabel}`, 32, currentY);
+    currentY += 5;
+
+    doc.setFont("helvetica", "bold");
+    doc.text("UNIFORME:", 14, currentY);
+    doc.setFont("helvetica", "normal");
+    doc.text(formData.uniform || "4º A - PRONTIDÃO COMPLETO;", 36, currentY);
+    currentY += 8;
+
+    // Obter dias do período
+    let datesList = getDatesInRangeForPDF(
+      filterStart || formData.periodoInicio,
+      filterEnd || formData.periodoFim
+    );
+    
+    const uniqueFormattedDates = new Map<string, { iso: string; formatted: string; weekDay: string }>();
+    datesList.forEach(d => { if (d.formatted) uniqueFormattedDates.set(d.formatted, d); });
+
+    (formData.costSheetItems || []).forEach(item => {
+      const itemDates = item.datesList && item.datesList.length > 0
+        ? item.datesList
+        : (item.date ? item.date.split(',').map((s: string) => s.trim()) : []);
+      itemDates.forEach(dStr => {
+        const formatted = formatDate(dStr);
+        if (formatted && !formatted.includes('undefined')) {
+          const parts = formatted.split('/');
+          const iso = parts.length === 3 ? `${parts[2]}-${parts[1]}-${parts[0]}` : dStr;
+          
+          if (isFilteredPeriod) {
+            if (filterStart && iso < filterStart) return;
+            if (filterEnd && iso > filterEnd) return;
+          }
+
+          if (!uniqueFormattedDates.has(formatted)) {
+            const daysOfWeek = ['DOMINGO', 'SEGUNDA-FEIRA', 'TERÇA-FEIRA', 'QUARTA-FEIRA', 'QUINTA-FEIRA', 'SEXTA-FEIRA', 'SÁBADO'];
+            let weekDay = '';
+            if (iso) {
+              const dt = new Date(iso + 'T00:00:00');
+              if (!isNaN(dt.getTime())) weekDay = daysOfWeek[dt.getDay()];
+            }
+            uniqueFormattedDates.set(formatted, { iso, formatted, weekDay });
+          }
+        }
+      });
+    });
+
+    datesList = Array.from(uniqueFormattedDates.values()).sort((a, b) => {
+      const parseDate = (str: string) => {
+        const p = str.split('/');
+        return p.length === 3 ? `${p[2]}-${p[1]}-${p[0]}` : str;
+      };
+      return parseDate(a.formatted).localeCompare(parseDate(b.formatted));
+    });
+
+    datesList.forEach((d) => {
+      if (currentY > 230) {
+        doc.addPage();
+        addCbmpaHeader(doc, false, 9, state);
+        currentY = 35;
+      }
+
+      // Banner do Dia
+      doc.setFillColor(240, 240, 240);
+      doc.rect(14, currentY, 182, 6, 'F');
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(9);
+      doc.setTextColor(0, 0, 0);
+      doc.text(`ESCALA DO DIA ${d.formatted}${d.weekDay ? ` - ${d.weekDay}` : ''}`, 105, currentY + 4.2, { align: 'center' });
+      currentY += 7;
+
+      // Militares escalados no dia d
+      const dayItems = (formData.costSheetItems || []).filter(item => {
+        const itemDates = item.datesList && item.datesList.length > 0
+          ? item.datesList
+          : (item.date ? item.date.split(',').map(s => s.trim()) : []);
+        return itemDates.some(idStr => isDateMatchForPDF(idStr, d));
+      });
+
+      dayItems.sort((a, b) => {
+        const shiftA = getShiftForDayForPDF(a, d);
+        const shiftB = getShiftForDayForPDF(b, d);
+        return shiftA.localeCompare(shiftB, undefined, { numeric: true });
+      });
+
+      const tableData: any = [];
+      dayItems.forEach((item) => {
+        let roleStr = item.role || (item.isCommander ? 'Comandante' : (item.isAuxiliar ? 'Aux. do Cmt' : ''));
+        if (!roleStr && formData.serviceType === 'DIVERSOS') {
+          const sub = formData.servicoDiversosSubTipo || '';
+          if (sub === 'Reforço da Guarda') roleStr = 'Componente da Guarda';
+          else if (sub === 'Reforço Operacional') roleStr = 'Componente de GU';
+          else if (sub === 'Reforço Administrativo') roleStr = 'Reforço adm';
+          else if (sub === 'Guarda-vidas') roleStr = 'Guarda-vidas';
+          else roleStr = 'Componente';
+        }
+        if (!roleStr) roleStr = 'Componente';
+
+        const itemTurn = getShiftForDayForPDF(item, d);
+        tableData.push([
+          itemTurn.toUpperCase(),
+          getAbbreviatedRank(item.soldierRank || '-'),
+          (item.soldierName || '').toUpperCase(),
+          item.soldierMatricula,
+          item.soldierUbm || formData.ubmOrigem || formData.issuerUbm || 'CBMPA',
+          roleStr.toUpperCase()
+        ]);
+      });
+
+      if (dayItems.length === 0) {
+        tableData.push([
+          { content: 'NENHUM MILITAR ESCALADO NESTE DIA', colSpan: 6, styles: { halign: 'center', fontStyle: 'italic', textColor: [120, 120, 120] } }
+        ]);
+      } else {
+        tableData.push([
+          { content: 'EFETIVO DO DIA', colSpan: 5, styles: { halign: 'center', fillColor: [248, 218, 69], fontStyle: 'bold' } },
+          { content: `${dayItems.length}`, styles: { halign: 'center', fillColor: [248, 218, 69], fontStyle: 'bold' } }
+        ]);
+      }
+
+      (doc as any).autoTable({
+        startY: currentY,
+        head: [['TURNO', 'GRADUAÇÃO', 'NOME DO MILITAR', 'MF', 'UBM', 'FUNÇÃO']],
+        body: tableData,
+        theme: 'grid',
+        styles: { fontSize: 8, cellPadding: 2, textColor: [0, 0, 0] },
+        headStyles: { fillColor: [248, 218, 69], textColor: [0, 0, 0], fontStyle: 'bold', halign: 'center' },
+        alternateRowStyles: { fillColor: [245, 245, 245] },
+        columnStyles: {
+          0: { halign: 'center', cellWidth: 25 },
+          1: { halign: 'center', cellWidth: 25 },
+          2: { halign: 'left' },
+          3: { halign: 'center', cellWidth: 22 },
+          4: { halign: 'center', cellWidth: 20 },
+          5: { halign: 'center', cellWidth: 25 }
+        }
+      });
+
+      currentY = (doc as any).lastAutoTable.finalY + 6;
+    });
+
+  } else {
+    // Serviço normal (tabela única)
+    doc.setFont("helvetica", "bold");
+    doc.text("HORÁRIO:", 14, currentY);
+    doc.setFont("helvetica", "normal");
+    doc.text(`${formData.eventStartTime || '-'} às ${formData.eventEndTime || '-'}`, 34, currentY);
+
+    doc.setFont("helvetica", "bold");
+    doc.text("UNIFORME:", 14, currentY + 5);
+    doc.setFont("helvetica", "normal");
+    doc.text(formData.uniform || "4º A - PRONTIDÃO COMPLETO;", 36, currentY + 5);
+
+    // Subtítulo de data/turno
+    doc.setFillColor(240, 240, 240);
+    doc.rect(14, currentY + 10, 182, 6, 'F');
+    doc.setFont("helvetica", "bold");
+    const endTimeStr = formData.eventEndTime ? `ÀS ${formData.eventEndTime}` : 'AO TÉRMINO DO EVENTO';
+    doc.text(`${formatDateFull(formData.eventDate)} - TURNO (${formData.eventStartTime || '-'} ${endTimeStr})`, 105, currentY + 14, { align: 'center' });
+
+    // Tabela
+    const tableData: any = [];
+    (formData.costSheetItems || []).forEach((item, index) => {
+      let roleStr = item.role || (item.isCommander ? 'CMT' : (item.isAuxiliar ? 'AUXILIAR' : 'PREVENÇÃO'));
+      tableData.push([
+        (index + 1).toString(),
+        getAbbreviatedRank(item.soldierRank || '-'),
+        (item.soldierName || '').toUpperCase(),
+        item.soldierMatricula,
+        item.soldierUbm,
+        roleStr.toUpperCase()
+      ]);
+    });
+    
     tableData.push([
-      (index + 1).toString(),
-      getAbbreviatedRank(item.soldierRank || '-'),
-      (item.soldierName || '').toUpperCase(),
-      item.soldierMatricula,
-      item.soldierUbm,
-      roleStr.toUpperCase()
+      { content: 'EFETIVO TOTAL', colSpan: 5, styles: { halign: 'center', fillColor: [248, 218, 69], fontStyle: 'bold' } },
+      { content: `${(formData.costSheetItems || []).length}`, styles: { halign: 'center', fillColor: [248, 218, 69], fontStyle: 'bold' } }
     ]);
-  });
-  
-  // Adiciona a linha de total formatada na própria tabela
-  tableData.push([
-    { content: 'EFETIVO TOTAL', colSpan: 5, styles: { halign: 'center', fillColor: [248, 218, 69], fontStyle: 'bold' } },
-    { content: `${(formData.costSheetItems || []).length}`, styles: { halign: 'center', fillColor: [248, 218, 69], fontStyle: 'bold' } }
-  ]);
 
-  (doc as any).autoTable({
-    startY: 70,
-    head: [['ORDEM', 'GRADUAÇÃO', 'NOME DO MILITAR', 'MF', 'UBM', 'FUNÇÃO']],
-    body: tableData,
-    theme: 'grid',
-    styles: { fontSize: 8, cellPadding: 2, textColor: [0, 0, 0] },
-    headStyles: { fillColor: [248, 218, 69], textColor: [0, 0, 0], fontStyle: 'bold', halign: 'center' },
-    alternateRowStyles: { fillColor: [245, 245, 245] },
-    columnStyles: {
-      0: { halign: 'center', cellWidth: 15 },
-      1: { halign: 'center', cellWidth: 25 },
-      2: { halign: 'left' },
-      3: { halign: 'center', cellWidth: 25 },
-      4: { halign: 'center', cellWidth: 22 },
-      5: { halign: 'center', cellWidth: 25 }
-    }
-  });
+    (doc as any).autoTable({
+      startY: currentY + 20,
+      head: [['ORDEM', 'GRADUAÇÃO', 'NOME DO MILITAR', 'MF', 'UBM', 'FUNÇÃO']],
+      body: tableData,
+      theme: 'grid',
+      styles: { fontSize: 8, cellPadding: 2, textColor: [0, 0, 0] },
+      headStyles: { fillColor: [248, 218, 69], textColor: [0, 0, 0], fontStyle: 'bold', halign: 'center' },
+      alternateRowStyles: { fillColor: [245, 245, 245] },
+      columnStyles: {
+        0: { halign: 'center', cellWidth: 15 },
+        1: { halign: 'center', cellWidth: 25 },
+        2: { halign: 'left' },
+        3: { halign: 'center', cellWidth: 25 },
+        4: { halign: 'center', cellWidth: 22 },
+        5: { halign: 'center', cellWidth: 25 }
+      }
+    });
 
-  const finalY = (doc as any).lastAutoTable.finalY + 5;
+    currentY = (doc as any).lastAutoTable.finalY;
+  }
+
+  const finalY = currentY + 5;
   doc.setFont("helvetica", "normal");
   doc.setFontSize(9);
   
@@ -337,15 +602,25 @@ export const generateEscalaOnlyPDF = (state: AppState, returnBlob: boolean = fal
     doc.setFont("helvetica", "normal");
   }
   
-  const today = new Date();
+  let dateToUse = new Date();
+  if (formData.eventDate) {
+    const parsed = new Date(formData.eventDate + 'T00:00:00');
+    if (!isNaN(parsed.getTime())) {
+      dateToUse = parsed;
+    }
+  }
   const monthNames = ["JANEIRO", "FEVEREIRO", "MARÇO", "ABRIL", "MAIO", "JUNHO", "JULHO", "AGOSTO", "SETEMBRO", "OUTUBRO", "NOVEMBRO", "DEZEMBRO"];
-  const dateFullStr = `BELÉM/PA, ${today.getDate()} DE ${monthNames[today.getMonth()]} DE ${today.getFullYear()}.`;
-  doc.text(dateFullStr, 196, finalY + 10, { align: 'right' });
+  const dateFullStr = `BELÉM/PA, ${dateToUse.getDate()} DE ${monthNames[dateToUse.getMonth()]} DE ${dateToUse.getFullYear()}.`;
+  
+  let signatureY = finalY + 35;
+  if (signatureY > 255) {
+    doc.addPage();
+    addCbmpaHeader(doc, false, 9, state);
+    signatureY = 45;
+  }
+  doc.text(dateFullStr, 196, signatureY - 25, { align: 'right' });
 
   // Signature
-  const signatureY = finalY + 35;
-  
-  // Resolve escalante details with war name and rank abbreviation
   const customUsers = JSON.parse(localStorage.getItem('CUSTOM_USERS_DB') || '{}');
   const escMatricula = escalante?.matricula || state.formData.issuerMatricula;
   const cachedUser = customUsers[escMatricula];
@@ -363,8 +638,7 @@ export const generateEscalaOnlyPDF = (state: AppState, returnBlob: boolean = fal
   const signatureLine2 = `Escalante do ${ubmOrigem}`;
   doc.text(signatureLine2, 105, signatureY + 5, { align: 'center' });
 
-  // Registro da escala uns 3cm abaixo do campo de assinatura (somente nome do escalante, data e hora)
-  let labelText = escalaApprovalLabel || (typeof extraData === 'object' && extraData?.escalaApprovalLabel) || (typeof extraData === 'string' && extraData) || '';
+  let labelText = escalaApprovalLabel || '';
   if (!labelText) {
     const escNameStr = (escFullName || 'Escalante').toUpperCase();
     const dateNowStr = new Date().toLocaleDateString('pt-BR') + ', ' + new Date().toLocaleTimeString('pt-BR');
@@ -378,7 +652,6 @@ export const generateEscalaOnlyPDF = (state: AppState, returnBlob: boolean = fal
   doc.setTextColor(0, 0, 0);
   doc.text(labelText, 105, signatureY + 22, { align: 'center' });
 
-  // Footer
   addTraceabilityFooters(doc, false, escalaApprovalLabel, ubmOrigem);
 
   return returnBlob ? doc.output('blob') : doc.output('bloburl');
@@ -425,7 +698,22 @@ export const generatePDF = (state: AppState, extraData?: any, returnBlob: boolea
     doc.text(`    NS ${formData.memoNs || '_____'} – SEOP/COP`, leftMargin, startY + 45);
     doc.text(`    BG de publicação Nº ${formData.memoBg || '_____'}`, leftMargin, startY + 50);
     doc.text("Senhor Comandante,", leftMargin, startY + 70);
+    
+    let memoDataText = '';
+    if (formData.serviceType === 'DIVERSOS') {
+      const mesRef = formData.referenciaMes || (formData.periodoInicio ? formData.periodoInicio.slice(0, 7) : '');
+      if (mesRef) {
+        const parts = mesRef.split('-');
+        memoDataText = `no período de ${parts[1]}/${parts[0]}`;
+      } else {
+        memoDataText = `no período de ${formData.periodoInicio ? formatDate(formData.periodoInicio) : ''} a ${formData.periodoFim ? formatDate(formData.periodoFim) : ''}`;
+      }
+    } else {
+      memoDataText = `realizada ${formData.memoEventDates || (formData.eventDate ? formatDate(formData.eventDate) : '________')}`;
+    }
+
     const legalText = MEMO_LEGAL_TEXT
+      .replace('realizada {{DATA}}', memoDataText)
       .replace('{{DATA}}', formData.memoEventDates || (formData.eventDate ? formatDate(formData.eventDate) : '________'))
       .replace('{{NS}}', formData.memoNs || '_____')
       .replace('{{BG}}', formData.memoBg || '_____');
@@ -496,7 +784,7 @@ export const generatePDF = (state: AppState, extraData?: any, returnBlob: boolea
     const aggregatedItems = Array.from(aggregatedMap.values());
     const tableRows = aggregatedItems.map((item, index) => {
       const totalVal = item.totalQty * item.unitValue;
-      let dateDisplay = item.datesList ? item.datesList.sort().map((d: string) => formatDate(d)).join('\n') : '-';
+      let dateDisplay = item.datesList ? item.datesList.sort().map((d: string) => formatDateShortDDMM(d)).join('\n') : '-';
       return [
         (index + 1).toString(), item.soldierMatricula, getAbbreviatedRank(item.soldierRank || ''), item.soldierName, item.soldierUbm, item.totalQty.toString(),
         dateDisplay, item.qtyDiversos.toString(), item.qtyPrev.toString(), item.qtyGV.toString(), item.qtyCorte.toString(), formatCurrency(item.unitValue), formatCurrency(totalVal)
@@ -742,11 +1030,20 @@ export const generatePDF = (state: AppState, extraData?: any, returnBlob: boolea
         { width: 50, label: "UBM:", value: formData.issuerUbm }
     ]);
     currentY = drawGridRow(currentY, 7, [{ width: 190, label: "LOCAL DO EVENTO:", value: formData.eventLocal }]);
-    currentY = drawGridRow(currentY, 7, [
+    if (formData.serviceType === 'DIVERSOS') {
+      const periodStr = formData.referenciaMes 
+        ? `${formData.referenciaMes.split('-').reverse().join('/')}` 
+        : (formData.periodoInicio ? `${formatDate(formData.periodoInicio)} A ${formatDate(formData.periodoFim)}` : 'N/A');
+      currentY = drawGridRow(currentY, 7, [
+        { width: 190, label: "PERÍODO DO EVENTO (MÊS/ANO):", value: periodStr }
+      ]);
+    } else {
+      currentY = drawGridRow(currentY, 7, [
         { width: 95, label: "DATA DO EVENTO:", value: formatDate(formData.eventDate) },
         { width: 95, label: "DIA DA SEMANA:", value: formData.eventDayOfWeek }
-    ]);
-    currentY = drawGridRow(currentY, 7, [{ width: 190, label: "HORÁRIO NO EVENTO:", value: `${formData.eventStartTime} AS ${formData.eventEndTime}` }]);
+      ]);
+    }
+    currentY = drawGridRow(currentY, 7, [{ width: 190, label: "HORÁRIO NO EVENTO:", value: formData.serviceType === 'DIVERSOS' ? "TURNOS DE TRABALHO" : `${formData.eventStartTime} AS ${formData.eventEndTime}` }]);
     currentY = drawGridRow(currentY, 7, [
         { width: 95, label: "TOTAL EFETIVO:", value: `${counts.total} BM's` }, 
         { width: 95, label: "REFERÊNCIA:", value: `NS Nº ${formData.memoNs || '_____'}` }
@@ -759,12 +1056,22 @@ export const generatePDF = (state: AppState, extraData?: any, returnBlob: boolea
     currentY = drawGridRow(currentY, 7, [{ width: 190, label: "ANEXOS:", value: "ESCALA GERAL/CÓPIA DA NOTA/ ORDEM DE SERVIÇO." }]);
     currentY += 2;
 
+    const isDiversos = formData.serviceType === 'DIVERSOS';
     const hasEffChanges = (formData.reportEffectiveItems || []).some((i: any) => i.status !== 'P' || i.substituteName);
     currentY = drawSectionHeader(`2. ALTERAÇÕES NO EFETIVO EMPREGADO - SIM (${hasEffChanges ? 'X' : ' '}) NÃO (${!hasEffChanges ? 'X' : ' '})`, currentY);
+    
+    const reportHeaders = isDiversos 
+      ? [['ORD', 'POST/GRAD', 'NOME GUERRA DO MILITAR', 'UBM', 'MF (OBRIGATÓRIO)', 'DIAS TRABALHADOS (DD/MM)']]
+      : [['ORD', 'POST/GRAD', 'NOME GUERRA DO MILITAR', 'UBM', 'MF (OBRIGATÓRIO)', 'P', 'F', 'D', 'P/A', 'A']];
+
+    const reportEffectiveList = (formData.reportEffectiveItems && formData.reportEffectiveItems.length > 0)
+      ? formData.reportEffectiveItems
+      : (formData.costSheetItems || []);
+
     doc.autoTable({
       startY: currentY,
-      head: [['ORD', 'POST/GRAD', 'NOME GUERRA DO MILITAR', 'UBM', 'MF (OBRIGATÓRIO)', 'P', 'F', 'D', 'P/A', 'A']],
-      body: (formData.reportEffectiveItems || []).map((item, i) => {
+      head: reportHeaders,
+      body: reportEffectiveList.map((item: any, i: number) => {
         let rank = getAbbreviatedRank(item.soldierRank || '');
         let name = item.soldierName || '';
         let mf = item.soldierMf || item.soldierMatricula || '';
@@ -773,7 +1080,6 @@ export const generatePDF = (state: AppState, extraData?: any, returnBlob: boolea
           let subNameRaw = item.substituteName.trim();
           let subMf = item.substituteMf || item.substituteMatricula || '';
 
-          // Clean out MF if embedded in substituteName string
           if (!subMf && subNameRaw.includes('MF:')) {
             const match = subNameRaw.match(/MF:\s*(\d+)/i);
             if (match) subMf = match[1];
@@ -806,6 +1112,21 @@ export const generatePDF = (state: AppState, extraData?: any, returnBlob: boolea
               name = subNameRaw;
             }
           }
+        }
+
+        if (isDiversos) {
+          const datesArr = item.datesList && item.datesList.length > 0 
+            ? item.datesList 
+            : (item.date ? item.date.split(',').map((s: string) => s.trim()) : []);
+          const workedDaysDDMM = datesArr.map((d: string) => formatDateShortDDMM(d)).join(', ');
+          return [
+            (i+1).toString(),
+            rank,
+            name,
+            item.soldierUbm || 'COP',
+            mf,
+            workedDaysDDMM || '-'
+          ];
         }
 
         return [

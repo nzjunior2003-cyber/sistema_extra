@@ -21,6 +21,13 @@ export interface Soldier {
   ubm?: string;
 }
 
+export interface ShiftItem {
+  id: string;
+  name: string; // e.g. "1º Turno"
+  startTime: string; // e.g. "07:00"
+  endTime: string;   // e.g. "13:00"
+}
+
 export interface CostSheetItem {
   id: string;
   soldierName: string;
@@ -29,6 +36,8 @@ export interface CostSheetItem {
   soldierUbm: string;
   date: string; 
   datesList?: string[];
+  shift?: string;
+  dayShifts?: Record<string, string>;
   serviceType: 'DIVERSOS' | 'PREVENCAO' | 'GUARDA_VIDAS' | 'CORTE_VEGETAL';
   quantity: number;
   unitValue: number;
@@ -45,6 +54,12 @@ export interface ReportEffectiveItem {
   soldierRank: string;
   soldierUbm: string;
   soldierMf: string; // Matricula
+  soldierMatricula?: string;
+  date?: string;
+  datesList?: string[];
+  shift?: string;
+  dayShifts?: Record<string, string>;
+  quantity?: number;
   status: 'P' | 'F' | 'D' | 'P/A' | 'A' | string;
   serviceType?: 'DIVERSOS' | 'PREVENCAO' | 'GUARDA_VIDAS' | 'CORTE_VEGETAL';
   isCommander?: boolean;
@@ -52,6 +67,9 @@ export interface ReportEffectiveItem {
   role?: string;
   substituteName?: string;
   substituteMf?: string;
+  substituteMatricula?: string;
+  substituteRank?: string;
+  substituteWarName?: string;
   substituteFile?: string; // para URL/base64 de anexo
   dispensaReason?: string;
   dispensaFile?: string;
@@ -86,6 +104,9 @@ export interface AppState {
     // Memo Specific
     recipient: string;
     recipientCargo: string;
+    recipientMatricula?: string;
+    recipientNome?: string;
+    recipientPosto?: string;
     memoSubject: string;
     
     // Memo Structured Inputs
@@ -104,6 +125,16 @@ export interface AppState {
     operationName: string;
     escalaObs: string;
     ubmOrigem: string;
+    serviceType?: string;
+    servicoDiversosSubTipo?: 'Reforço da Guarda' | 'Reforço Operacional' | 'Reforço Administrativo' | 'Outro' | string;
+    gestorMatricula?: string;
+    gestorNome?: string;
+    gestorPosto?: string;
+    gestorUbm?: string;
+    periodoInicio?: string;
+    periodoFim?: string;
+    referenciaMes?: string;
+    shifts?: ShiftItem[];
     nsAttachment?: string;
     nsAttachmentType?: 'link' | 'drive';
     bgAttachment?: string;

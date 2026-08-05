@@ -4,9 +4,9 @@ import {
   Flame, Sun, Moon, FileText, DollarSign, ClipboardList, 
   Share2, Upload, Wifi, WifiOff, Database, CheckCircle2, 
   User, Search, Plus, X, Star, Trash2, Check, Download,
-  GripVertical, Camera, Eraser, LayoutDashboard, ShieldCheck, Banknote, LogOut, Lock, AlertTriangle, Clock, ExternalLink, Users, UserPlus, History, UserCheck, ChevronRight, Eye, EyeOff
+  GripVertical, Camera, Eraser, LayoutDashboard, ShieldCheck, Banknote, LogOut, Lock, AlertTriangle, Clock, ExternalLink, Users, UserPlus, History, UserCheck, ChevronRight, Eye, EyeOff, PlusCircle, Filter, Calendar, Save
 } from 'lucide-react';
-import { AppState, DocumentType, Soldier, CostSheetItem, ReportEffectiveItem, ReportServiceItem } from './types';
+import { AppState, DocumentType, Soldier, CostSheetItem, ReportEffectiveItem, ReportServiceItem, ShiftItem } from './types';
 import { RANKS, UBMS, UNIT_VALUE_DEFAULT, EXTERNAL_DB_URL, REPORT_LOGISTICS_ITEMS, REPORT_VEHICLE_ITEMS, OCCURRENCE_CODES, ROLES, MEMO_LEGAL_TEXT } from './constants';
 import { generatePDF, generateEscalaOnlyPDF } from './utils/pdfGenerator';
 import { getEffectiveCostItems } from './utils/costHelpers';
@@ -181,6 +181,10 @@ const App: React.FC = () => {
   const [consultingEscalaId, setConsultingEscalaId] = useState<string | null>(null);
   const [showAtestarConfirmModal, setShowAtestarConfirmModal] = useState<string | null>(null);
 
+  const [showPeriodPdfModal, setShowPeriodPdfModal] = useState(false);
+  const [pdfPeriodStart, setPdfPeriodStart] = useState('');
+  const [pdfPeriodEnd, setPdfPeriodEnd] = useState('');
+
   // Filtros de Pesquisa - Usuário
   const [filterUserAno, setFilterUserAno] = useState('');
   const [filterUserMes, setFilterUserMes] = useState('');
@@ -201,6 +205,13 @@ const App: React.FC = () => {
   const [filterHomologadorAltServico, setFilterHomologadorAltServico] = useState('');
   const [filterHomologadorAltEfetivo, setFilterHomologadorAltEfetivo] = useState('');
   const [filterHomologadorMilitar, setFilterHomologadorMilitar] = useState('');
+
+  // Filtros de Pesquisa - Pagamento / Lançamento
+  const [filterPagamentoAno, setFilterPagamentoAno] = useState('');
+  const [filterPagamentoMes, setFilterPagamentoMes] = useState('');
+  const [filterPagamentoTipoServico, setFilterPagamentoTipoServico] = useState('');
+  const [filterPagamentoUbmOrigem, setFilterPagamentoUbmOrigem] = useState('');
+  const [filterPagamentoMilitar, setFilterPagamentoMilitar] = useState('');
 
   const handleDriveLogin = async () => {
     try {
@@ -314,6 +325,50 @@ const App: React.FC = () => {
   const [showHomologadorSuggestions, setShowHomologadorSuggestions] = useState(false);
   const [homologadorSuggestions, setHomologadorSuggestions] = useState<Soldier[]>([]);
 
+  // Estados para Gestor da UBM / Diretor / Chefe da Seção
+  const [gestorSearchTerm, setGestorSearchTerm] = useState('');
+  const [showGestorSuggestions, setShowGestorSuggestions] = useState(false);
+  const [gestorSuggestions, setGestorSuggestions] = useState<Soldier[]>([]);
+
+  // Estados para Filtros do Lançador (PAGAMENTO)
+  const [lancadorFilterServiceType, setLancadorFilterServiceType] = useState('ALL');
+  const [lancadorFilterUbm, setLancadorFilterUbm] = useState('ALL');
+  const [lancadorFilterPeriod, setLancadorFilterPeriod] = useState('');
+  const [lancadorFilterMilitar, setLancadorFilterMilitar] = useState('');
+
+  // Estados para Inserção de Militar no Relatório (Fechamento pelo Gestor)
+  const [reportNewSoldierSearch, setReportNewSoldierSearch] = useState('');
+  const [showReportNewSoldierSuggestions, setShowReportNewSoldierSuggestions] = useState(false);
+  const [reportNewSoldierSuggestions, setReportNewSoldierSuggestions] = useState<Soldier[]>([]);
+  const [reportNewSoldierSelected, setReportNewSoldierSelected] = useState<Soldier | null>(null);
+  const [reportNewSoldierDates, setReportNewSoldierDates] = useState<string[]>([]);
+  const [reportTempDate, setReportTempDate] = useState('');
+
+  const handleGestorSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    setGestorSearchTerm(value);
+    if (value.length >= 2) {
+      const filtered = state.personnelDb.filter(s =>
+        s.nome.toLowerCase().includes(value.toLowerCase()) ||
+        s.matricula.includes(value)
+      );
+      setGestorSuggestions(filtered);
+      setShowGestorSuggestions(true);
+    } else {
+      setGestorSuggestions([]);
+      setShowGestorSuggestions(false);
+    }
+  };
+
+  const selectGestor = (s: Soldier) => {
+    handleInputChange('gestorMatricula', s.matricula);
+    handleInputChange('gestorNome', s.nome);
+    handleInputChange('gestorPosto', s.posto || '');
+    handleInputChange('gestorUbm', s.ubm || '');
+    setGestorSearchTerm(`${s.posto ? s.posto.toUpperCase() + ' ' : ''}${s.nome} (Mat: ${s.matricula})`);
+    setShowGestorSuggestions(false);
+  };
+
   // Estados para Delegação de Função de Homologação
   const [delegationSuggestions, setDelegationSuggestions] = useState<Soldier[]>([]);
 
@@ -371,6 +426,50 @@ const App: React.FC = () => {
 
   const [costDateInput, setCostDateInput] = useState('');
   const [newCostDatesList, setNewCostDatesList] = useState<string[]>([]);
+  const [selectedDaysForNewItem, setSelectedDaysForNewItem] = useState<string[]>([]);
+  const [selectedDayShiftsForNewItem, setSelectedDayShiftsForNewItem] = useState<Record<string, string>>({});
+  const [selectedShiftForNewItem, setSelectedShiftForNewItem] = useState<string>('1º Turno');
+
+  const getDatesInRange = (startStr?: string, endStr?: string) => {
+    if (!startStr || !endStr) return [];
+    try {
+      const current = new Date(startStr + 'T00:00:00');
+      const end = new Date(endStr + 'T00:00:00');
+      if (isNaN(current.getTime()) || isNaN(end.getTime()) || current > end) return [];
+      const dates = [];
+      let count = 0;
+      while (current <= end && count < 62) {
+        const iso = current.toISOString().split('T')[0];
+        const [y, m, d] = iso.split('-');
+        const formatted = `${d}/${m}/${y}`;
+        const shortFormatted = `${d}/${m}`;
+        const weekDay = current.toLocaleDateString('pt-BR', { weekday: 'short' }).replace('.', '').toUpperCase();
+        dates.push({ iso, formatted, shortFormatted, dayNum: parseInt(d, 10), weekDay });
+        current.setDate(current.getDate() + 1);
+        count++;
+      }
+      return dates;
+    } catch (e) {
+      return [];
+    }
+  };
+
+  const isMonthClosedAutomatically = (referenciaMes?: string) => {
+    if (!referenciaMes) return false;
+    const parts = referenciaMes.split('-');
+    if (parts.length < 2) return false;
+    const refYear = parseInt(parts[0], 10);
+    const refMonth = parseInt(parts[1], 10);
+    if (isNaN(refYear) || isNaN(refMonth)) return false;
+
+    const now = new Date();
+    const curYear = now.getFullYear();
+    const curMonth = now.getMonth() + 1;
+
+    if (curYear > refYear) return true;
+    if (curYear === refYear && curMonth > refMonth) return true;
+    return false;
+  };
 
   const [newCostItem, setNewCostItem] = useState<{
     selectedSoldier: Soldier | null;
@@ -445,7 +544,7 @@ const App: React.FC = () => {
     localStorage.setItem(SYSTEM_ESCALAS_KEY, JSON.stringify(escalas));
   }, [escalas]);
 
-  // A sua lógica original de sincronia entre Planilha e Relatório (MANTIDA)
+  // A sua lógica original de sincronia entre Planilha e Relatório (MANTIDA, ajustada para DIVERSOS)
   useEffect(() => {
     const reportItems = state.formData.reportEffectiveItems || [];
     const costItems = state.formData.costSheetItems || [];
@@ -475,10 +574,12 @@ const App: React.FC = () => {
                 soldierMatricula: reportItem.soldierMf,
                 soldierRank: reportItem.soldierRank,
                 soldierUbm: reportItem.soldierUbm,
-                date: state.formData.eventDate || '', 
-                datesList: state.formData.eventDate ? [state.formData.eventDate] : [],
+                date: reportItem.date || state.formData.eventDate || '', 
+                datesList: reportItem.datesList && reportItem.datesList.length > 0 ? [...reportItem.datesList] : (state.formData.eventDate ? [state.formData.eventDate] : []),
+                shift: reportItem.shift,
+                dayShifts: reportItem.dayShifts ? { ...reportItem.dayShifts } : undefined,
                 serviceType: (reportItem.serviceType as any) || 'PREVENCAO',
-                quantity: 1, 
+                quantity: reportItem.quantity || (reportItem.datesList ? reportItem.datesList.length : 1), 
                 unitValue: UNIT_VALUE_DEFAULT,
                 isCommander: reportItem.isCommander,
                 isAuxiliar: reportItem.isAuxiliar,
@@ -504,10 +605,28 @@ const App: React.FC = () => {
                 newCostItems[idx].serviceType = reportItem.serviceType as any;
                 updated = true;
             }
-            if (newCostItems[idx].date !== state.formData.eventDate) {
-                newCostItems[idx].date = state.formData.eventDate;
-                newCostItems[idx].datesList = state.formData.eventDate ? [state.formData.eventDate] : [];
-                updated = true;
+            if (state.formData.serviceType !== 'DIVERSOS') {
+                if (newCostItems[idx].date !== state.formData.eventDate) {
+                    newCostItems[idx].date = state.formData.eventDate;
+                    newCostItems[idx].datesList = state.formData.eventDate ? [state.formData.eventDate] : [];
+                    updated = true;
+                }
+            } else {
+                // Para DIVERSOS, preserva datesList e dayShifts originais ou sincroniza se houver atualização no relatório
+                if (reportItem.datesList && reportItem.datesList.length > 0 && JSON.stringify(newCostItems[idx].datesList) !== JSON.stringify(reportItem.datesList)) {
+                    newCostItems[idx].datesList = [...reportItem.datesList];
+                    newCostItems[idx].date = reportItem.date || reportItem.datesList.join(', ');
+                    newCostItems[idx].quantity = reportItem.datesList.length;
+                    updated = true;
+                }
+                if (reportItem.dayShifts && JSON.stringify(newCostItems[idx].dayShifts) !== JSON.stringify(reportItem.dayShifts)) {
+                    newCostItems[idx].dayShifts = { ...reportItem.dayShifts };
+                    updated = true;
+                }
+                if (reportItem.shift && newCostItems[idx].shift !== reportItem.shift) {
+                    newCostItems[idx].shift = reportItem.shift;
+                    updated = true;
+                }
             }
             if (updated) needsUpdate = true;
         }
@@ -519,7 +638,7 @@ const App: React.FC = () => {
             formData: { ...prev.formData, costSheetItems: newCostItems }
         }));
     }
-  }, [state.formData.reportEffectiveItems, state.formData.eventDate]);
+  }, [state.formData.reportEffectiveItems, state.formData.eventDate, state.formData.serviceType]);
 
   useEffect(() => {
     if (activeTab === 'ADMIN') {
@@ -750,9 +869,13 @@ const App: React.FC = () => {
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
     let foundUser: any = null;
-    const mat = loginData.matricula.trim();
+    const matInput = loginData.matricula.trim();
+    
+    let customUser = customUsersDict[matInput];
+    if (!customUser) {
+        customUser = Object.values(customUsersDict).find(u => u.email && u.email.toLowerCase() === matInput.toLowerCase()) as any;
+    }
 
-    const customUser = customUsersDict[mat];
     if (customUser && customUser.senha === loginData.senha) {
        // Ensure administrador always has ADMIN permissions even if cached old
        if (customUser.matricula === 'administrador' && !customUser.permissoes?.includes('ADMIN')) {
@@ -765,13 +888,15 @@ const App: React.FC = () => {
        }
        foundUser = customUser;
     } else if (!customUser && loginData.senha === '123456') {
-       const mockUser = MOCK_USERS.find(u => u.matricula === mat);
+       const mockUser = MOCK_USERS.find(u => u.matricula === matInput);
        if (mockUser) {
            foundUser = { ...mockUser };
        } else {
-           const soldier = state.personnelDb.find(s => s.matricula === mat);
+           const soldier = state.personnelDb.find(s => s.matricula === matInput);
            if (soldier) {
                foundUser = { matricula: soldier.matricula, nome: soldier.nome, posto: soldier.posto, permissoes: [] };
+           } else {
+               foundUser = { matricula: matInput, nome: 'Militar', posto: 'SD', permissoes: [] };
            }
        }
        if (foundUser) foundUser.isFirstAccess = true;
@@ -779,7 +904,7 @@ const App: React.FC = () => {
        setLoginError('Senha incorreta.');
        return;
     } else if (!customUser && loginData.senha !== '123456') {
-        const mockUser = MOCK_USERS.find(u => u.matricula === mat && u.senha === loginData.senha);
+        const mockUser = MOCK_USERS.find(u => u.matricula === matInput && u.senha === loginData.senha);
         if (mockUser) {
             foundUser = mockUser;
         }
@@ -1803,6 +1928,52 @@ const App: React.FC = () => {
       formData: { ...prev.formData, [field]: finalValue }}));
   };
 
+  const handleAddShift = () => {
+    const currentShifts = (state.formData.shifts && state.formData.shifts.length > 0)
+      ? state.formData.shifts
+      : [
+          { id: 'shift-1', name: '1º Turno', startTime: '07:00', endTime: '13:00' },
+          { id: 'shift-2', name: '2º Turno', startTime: '13:00', endTime: '19:00' }
+        ];
+    const nextNum = currentShifts.length + 1;
+    const newShift: ShiftItem = {
+      id: `shift-${Date.now()}`,
+      name: `${nextNum}º Turno`,
+      startTime: '07:00',
+      endTime: '13:00'
+    };
+    handleInputChange('shifts', [...currentShifts, newShift]);
+  };
+
+  const handleUpdateShift = (id: string, field: 'startTime' | 'endTime' | 'name', value: string) => {
+    const currentShifts = (state.formData.shifts && state.formData.shifts.length > 0)
+      ? state.formData.shifts
+      : [
+          { id: 'shift-1', name: '1º Turno', startTime: '07:00', endTime: '13:00' },
+          { id: 'shift-2', name: '2º Turno', startTime: '13:00', endTime: '19:00' }
+        ];
+    const updated = currentShifts.map(s => s.id === id ? { ...s, [field]: value } : s);
+    handleInputChange('shifts', updated);
+  };
+
+  const handleRemoveShift = (id: string) => {
+    const currentShifts = (state.formData.shifts && state.formData.shifts.length > 0)
+      ? state.formData.shifts
+      : [
+          { id: 'shift-1', name: '1º Turno', startTime: '07:00', endTime: '13:00' },
+          { id: 'shift-2', name: '2º Turno', startTime: '13:00', endTime: '19:00' }
+        ];
+    if (currentShifts.length <= 1) {
+      alert("Deve haver pelo menos um turno cadastrado.");
+      return;
+    }
+    const updated = currentShifts.filter(s => s.id !== id).map((s, idx) => ({
+      ...s,
+      name: `${idx + 1}º Turno`
+    }));
+    handleInputChange('shifts', updated);
+  };
+
   const filterSoldiers = (term: string) => {
     if (!term || term.length < 2) return [];
     const t = term.toUpperCase();
@@ -2148,6 +2319,10 @@ const App: React.FC = () => {
 
   const addSoldierToRoster = () => {
     const { selectedSoldier, serviceType, qty, ubm } = newCostItem;
+    const isDiversos = state.formData.serviceType === 'DIVERSOS';
+    const isContinuousService = isDiversos &&
+      ['Reforço da Guarda', 'Reforço Operacional', 'Reforço Administrativo'].includes(state.formData.servicoDiversosSubTipo || '');
+
     const soldierName = selectedSoldier?.nome || "Militar Manual";
     const soldierRank = selectedSoldier?.posto ? selectedSoldier.posto.toUpperCase() : "SD QBM";
     const soldierUbm = ubm || selectedSoldier?.ubm || "UBM";
@@ -2156,6 +2331,38 @@ const App: React.FC = () => {
     if (!soldierMatricula) {
       alert("Selecione um militar ou digite uma matrícula.");
       return;
+    }
+
+    if (isDiversos && selectedDaysForNewItem.length === 0) {
+      alert("Selecione pelo menos um dia no período para este militar em Serviços Diversos.");
+      return;
+    }
+
+    // Double shift on same day check for continuous service
+    if (isContinuousService) {
+      const sameDayConflicts: string[] = [];
+      const existingItems = state.formData.costSheetItems || [];
+
+      for (const day of selectedDaysForNewItem) {
+        const hasExisting = existingItems.some(item => {
+          if (item.soldierMatricula !== soldierMatricula) return false;
+          const days = item.datesList && item.datesList.length > 0 ? item.datesList : (item.date ? item.date.split(',').map(s => s.trim()) : []);
+          return days.includes(day);
+        });
+        if (hasExisting) {
+          sameDayConflicts.push(day);
+        }
+      }
+
+      if (sameDayConflicts.length > 0) {
+        alert(
+          `⚠️ IMPOSSÍVEL ESCALAR MILITAR EM DOIS TURNOS NO MESMO DIA\n\n` +
+          `O militar ${soldierRank} ${soldierName} (Matrícula: ${soldierMatricula}) já possui turno agendado nos seguintes dias:\n\n` +
+          `${sameDayConflicts.map(d => `• Dia ${d}`).join('\n')}\n\n` +
+          `Cada turno equivale a uma jornada extraordinária e o militar não pode ser escalado em dois turnos no mesmo dia.`
+        );
+        return;
+      }
     }
 
     // Interval Check (< 24 horas)
@@ -2183,30 +2390,125 @@ const App: React.FC = () => {
       if (!proceed) return;
     }
 
+    const itemDatesList = isDiversos
+      ? [...selectedDaysForNewItem]
+      : (newCostDatesList.length > 0 ? newCostDatesList : (state.formData.eventDate ? [state.formData.eventDate] : []));
+
+    const itemDatesString = itemDatesList.join(', ');
+    const itemQty = isDiversos ? selectedDaysForNewItem.length : (qty || itemDatesList.length || 1);
+    
+    const dayShiftsMap = isDiversos && Object.keys(selectedDayShiftsForNewItem).length > 0 ? { ...selectedDayShiftsForNewItem } : undefined;
+    const assignedShift = isDiversos
+      ? (itemDatesList[0] ? (selectedDayShiftsForNewItem[itemDatesList[0]] || selectedShiftForNewItem || '1º Turno') : '1º Turno')
+      : undefined;
+
     const newItem: CostSheetItem = {
       id: Date.now().toString(),
       soldierName,
       soldierMatricula,
       soldierRank,
       soldierUbm,
-      date: newCostDatesList.length > 0 ? newCostDatesList.join(', ') : '',
-      datesList: newCostDatesList,
-      serviceType: serviceType as any,
-      quantity: qty,
+      date: itemDatesString,
+      datesList: itemDatesList,
+      shift: assignedShift,
+      dayShifts: dayShiftsMap,
+      serviceType: (state.formData.serviceType || serviceType) as any,
+      quantity: itemQty,
       unitValue: UNIT_VALUE_DEFAULT,
+      isCommander: false
+    };
+
+    const newEffectiveItem: ReportEffectiveItem = {
+      id: newItem.id,
+      soldierName,
+      soldierRank,
+      soldierUbm,
+      soldierMf: soldierMatricula,
+      status: 'P',
+      date: itemDatesString,
+      datesList: itemDatesList,
+      shift: assignedShift,
+      dayShifts: dayShiftsMap,
+      quantity: itemQty,
+      serviceType: (state.formData.serviceType || serviceType) as any,
       isCommander: false
     };
 
     setState(prev => ({
       ...prev,
-      formData: { ...prev.formData, costSheetItems: [...prev.formData.costSheetItems, newItem] }
+      formData: {
+        ...prev.formData,
+        costSheetItems: [...prev.formData.costSheetItems, newItem],
+        reportEffectiveItems: [...(prev.formData.reportEffectiveItems || []), newEffectiveItem]
+      }
     }));
 
     setCostSearchTerm('');
     setShowCostSuggestions(false);
     setNewCostItem(prev => ({ ...prev, selectedSoldier: null, qty: 1 }));
     setNewCostDatesList([]);
+    setSelectedDaysForNewItem([]);
+    setSelectedDayShiftsForNewItem({});
     setCostDateInput('');
+  };
+
+  const handleFechamentoTotalEscalante = () => {
+    const gestorNome = state.formData.gestorNome || 'Gestor da UBM';
+    const gestorPosto = state.formData.gestorPosto || '';
+    const gestorMat = state.formData.gestorMatricula || '';
+
+    const confirmMsg = `⚠️ CONFIRMAÇÃO DE FECHAMENTO TOTAL DAS ESCALAS\n\n` +
+      `Deseja realizar o Fechamento Total desta escala de Serviço Diverso?\n\n` +
+      `• Mês de Referência: ${state.formData.referenciaMes || '-'}\n` +
+      `• Subtipo: ${state.formData.servicoDiversosSubTipo || '-'}\n` +
+      `• Gestor Designado: ${gestorPosto} ${gestorNome} ${gestorMat ? `(Mat: ${gestorMat})` : ''}\n\n` +
+      `Ao confirmar, a escala será enviada para o perfil do Gestor da UBM/Diretor para preenchimento e atesto do relatório consolidado, sem a possibilidade de novas inserções pelo escalante.`;
+
+    if (window.confirm(confirmMsg)) {
+      setState(prev => ({
+        ...prev,
+        formData: {
+          ...prev.formData,
+          isClosedForGestor: true,
+          closedAt: new Date().toISOString(),
+          closedBy: currentUser.nome
+        }
+      }));
+
+      saveEscalaWorkflow('em_edicao', 'Fechamento total realizado com sucesso! A escala foi encaminhada para o Gestor da UBM.', false);
+    }
+  };
+
+  const handleSaveEscalaAndNotify = async (novoStatus: string, message: string) => {
+    const roster = state.formData.costSheetItems || [];
+    if (roster.length > 0) {
+      const opName = state.formData.operationName || state.formData.servicoDiversosSubTipo || 'Serviços Diversos';
+      const refMonth = state.formData.referenciaMes || '';
+      
+      roster.forEach((m: any) => {
+        const u = customUsersDict[m.soldierMatricula] || state.personnelDb.find(p => p.matricula === m.soldierMatricula);
+        if (u?.email) {
+          fetch('/api/send-email', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              to: u.email,
+              subject: `Notificação de Escala - ${opName}`,
+              html: `<div style="font-family: sans-serif; padding: 15px; border: 1px solid #ddd; border-radius: 8px;">
+                <h3 style="color: #1e3a8a;">CBMPA - Notificação de Escala de Serviço</h3>
+                <p>Prezado(a) <strong>${m.soldierRank} ${m.soldierName}</strong> (Mat: ${m.soldierMatricula}),</p>
+                <p>Você foi escalado(a) na missão de <strong>${opName}</strong> (${state.formData.servicoDiversosSubTipo || 'Serviço Diverso'}).</p>
+                <p><strong>Mês de Referência:</strong> ${refMonth}</p>
+                <p><strong>Dias Escalados:</strong> ${m.datesList?.join(', ') || m.date || 'Conforme escala'}</p>
+                <p style="margin-top: 15px; font-size: 12px; color: #666;">Acesse o sistema Extra Docs para mais informações.</p>
+              </div>`
+            })
+          }).catch(err => console.warn('Email notification failed:', err));
+        }
+      });
+    }
+
+    await saveEscalaWorkflow(novoStatus, message, false);
   };
 
   const initiateCommanderSelection = (id: string, context: 'COST' | 'REPORT') => {
@@ -2365,25 +2667,30 @@ const App: React.FC = () => {
     const rawLines = csvText.split(/\r\n|\n|\r/).filter(line => line.trim() !== '');
     const startIdx = rawLines[0].toLowerCase().includes('matricula') ? 1 : 0;
     const dataLines = rawLines.slice(startIdx);
+    const seen = new Set<string>();
+    const result: Soldier[] = [];
     
-    return dataLines.map((line): Soldier | null => {
+    for (const line of dataLines) {
       const cols = line.split(',').map(s => s.trim().replace(/^"|"$/g, ''));
-      if (cols.length < 3) return null;
+      if (cols.length < 3) continue;
       const matriculaIdx = cols.findIndex(c => /^\d{5,}/.test(c));
       const nomeIdx = matriculaIdx > 0 ? matriculaIdx - 1 : 0;
       const cargoIdx = matriculaIdx + 1;
       const finalMat = matriculaIdx !== -1 ? cols[matriculaIdx] : cols[2];
       const finalNome = matriculaIdx !== -1 ? cols[nomeIdx] : cols[1];
       const finalCargo = cols[cargoIdx] || cols[3] || '';
-      if (!finalNome || !finalMat) return null;
-      return {
+      if (!finalNome || !finalMat) continue;
+      if (seen.has(finalMat)) continue;
+      seen.add(finalMat);
+      result.push({
         matricula: finalMat,
         nome: finalNome,
         posto: finalCargo,
         ubm: "QCG", 
         cpf: ''
-      };
-    }).filter((p): p is Soldier => p !== null);
+      });
+    }
+    return result;
   };
 
   // Funções Auxiliares (Drag and Drop, etc) omitidas da listagem acima para brevidade, mas devem ser mantidas
@@ -2414,6 +2721,20 @@ const App: React.FC = () => {
     const parts = dateStr.split('-');
     if (parts.length === 3) return `${parts[2]}/${parts[1]}/${parts[0]}`;
     return dateStr;
+  };
+
+  const formatOnlyDayNumbers = (dStr: string) => {
+    if (!dStr) return '';
+    const clean = dStr.trim();
+    if (clean.includes('/')) {
+      const parts = clean.split('/');
+      if (parts.length >= 1) return parts[0].padStart(2, '0');
+    }
+    if (clean.includes('-')) {
+      const parts = clean.split('-');
+      if (parts.length === 3) return parts[2].padStart(2, '0');
+    }
+    return clean;
   };
 
   const addMemoDate = () => {
@@ -2583,7 +2904,7 @@ const App: React.FC = () => {
           <form onSubmit={handleLogin} className="space-y-4">
             {loginError && <p className="text-red-500 text-sm bg-red-50 p-2 rounded">{loginError}</p>}
             <div>
-              <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1">Matrícula</label>
+              <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1">Matrícula ou E-mail</label>
               <div className="relative">
                 <User className="absolute left-3 top-3 text-gray-400" size={18} />
                 <input type="text" required className="w-full pl-10 pr-3 py-2 border rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white" value={loginData.matricula} onChange={e => setLoginData({...loginData, matricula: e.target.value})} />
@@ -2772,7 +3093,17 @@ const App: React.FC = () => {
                 </button>
               )}
 
-              {escalas.some(e => (e.comandanteMatricula === currentUser.matricula || e.auxiliarMatricula === currentUser.matricula) && (e.status === 'em_edicao' || e.status === 'esclarecimento_solicitado')) && (
+              {escalas.some(e => {
+                const isCmt = e.comandanteMatricula === currentUser.matricula || 
+                  e.auxiliarMatricula === currentUser.matricula || 
+                  e.formData?.gestorMatricula === currentUser.matricula || 
+                  e.gestorMatricula === currentUser.matricula;
+                if (!isCmt) return false;
+                if (e.formData?.serviceType === 'DIVERSOS') {
+                  return (e.formData?.isClosedForGestor === true || e.status === 'aguardando_atesto') && (e.status === 'em_edicao' || e.status === 'aguardando_atesto' || e.status === 'esclarecimento_solicitado');
+                }
+                return e.status === 'em_edicao' || e.status === 'esclarecimento_solicitado';
+              }) && (
                 <button onClick={() => setActiveTab('COMANDANTE')} className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg transition-all ${activeTab === 'COMANDANTE' ? 'bg-yellow-500 text-cbmpa-900 font-bold' : 'hover:bg-cbmpa-800 text-white'}`}>
                   <ClipboardList size={20} /><span>Atestar Missões</span><span className="bg-red-500 text-white text-xs px-2 rounded-full">!</span>
                 </button>
@@ -3160,8 +3491,8 @@ const App: React.FC = () => {
                                   <p className="text-xs text-gray-500 italic py-2">Nenhum usuário com este perfil.</p>
                                 ) : (
                                   <div className="space-y-3">
-                                    {usersWithRole.map((u: any) => (
-                                      <div key={u.matricula} className="flex flex-col gap-2 p-2.5 rounded-lg bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-750 text-xs">
+                                    {usersWithRole.map((u: any, uIdx: number) => (
+                                      <div key={`${roleName}-${u.matricula}-${uIdx}`} className="flex flex-col gap-2 p-2.5 rounded-lg bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-750 text-xs">
                                         <div className="flex justify-between items-start">
                                           <div>
                                             <span className="font-bold text-gray-900 dark:text-white">{u.nome || u.matricula}</span>
@@ -3231,10 +3562,10 @@ const App: React.FC = () => {
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-gray-200 dark:divide-gray-700 bg-white dark:bg-gray-800">
-                            {filteredAllUsers.map((u: any) => {
+                            {filteredAllUsers.map((u: any, uIdx: number) => {
                               const permissoes = u.permissoes || [];
                               return (
-                                <tr key={u.matricula} className="hover:bg-gray-50 dark:hover:bg-gray-750 transition">
+                                <tr key={`usr-all-${u.matricula}-${uIdx}`} className="hover:bg-gray-50 dark:hover:bg-gray-750 transition">
                                   <td className="p-3">
                                     <div className="font-bold text-gray-900 dark:text-white">{u.nome || 'Sem Nome'}</div>
                                     <div className="text-gray-500 text-[11px]">Matrícula: <span className="font-mono">{u.matricula}</span></div>
@@ -3482,19 +3813,27 @@ const App: React.FC = () => {
                     }
 
                     return filtered.map(escala => {
+                    const isContinuous = escala.formData?.serviceType === 'DIVERSOS';
                     const eventStart = new Date(`${escala.formData.eventDate}T${escala.formData.eventStartTime || '00:00'}`);
-                    const isPassed = new Date() > eventStart;
+                    const isPassed = isContinuous ? (escala.formData?.isClosedForGestor === true) : (new Date() > eventStart);
                     return (
                       <div key={escala.id} className={`p-4 border rounded-lg flex justify-between items-center bg-yellow-50 dark:bg-yellow-900/10 cursor-pointer ${isPassed ? 'opacity-70' : 'hover:bg-yellow-100'}`} onClick={() => {
                         if (isPassed) {
-                          alert("O evento já iniciou. A escala não pode mais ser editada.");
+                          alert(isContinuous ? "A escala já foi fechada e encaminhada ao gestor." : "O evento já iniciou. A escala não pode mais ser editada.");
                           return;
                         }
                         handleOpenEscala(escala, DocumentType.COST_SHEET);
                       }}>
                         <div>
-                          <div className="font-bold">{escala.formData.operationName || 'Sem Nome'}</div>
-                          <div className="text-sm text-gray-700 dark:text-gray-400">Data: {escala.formData.eventDate} às {escala.formData.eventStartTime} {isPassed ? '(Iniciada)' : ''}</div>
+                          <div className="font-bold flex items-center gap-2">
+                            {escala.formData.operationName || escala.formData.servicoDiversosSubTipo || 'Sem Nome'}
+                            {isContinuous && <span className="bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-300 text-xs px-2 py-0.5 rounded border border-purple-200 font-bold uppercase">Serviço Contínuo ({escala.formData.servicoDiversosSubTipo})</span>}
+                          </div>
+                          <div className="text-sm text-gray-700 dark:text-gray-400">
+                            {isContinuous 
+                              ? `Mês Ref: ${escala.formData.referenciaMes ? escala.formData.referenciaMes.split('-').reverse().join('/') : '-'} | Período: ${escala.formData.periodoInicio ? formatAnyDate(escala.formData.periodoInicio) : '-'} a ${escala.formData.periodoFim ? formatAnyDate(escala.formData.periodoFim) : '-'}`
+                              : `Data: ${formatAnyDate(escala.formData.eventDate)} às ${escala.formData.eventStartTime}`} {isPassed ? (isContinuous ? '(Fechamento Realizado)' : '(Iniciada)') : ''}
+                          </div>
                         </div>
                         {renderBadge(escala.status)}
                       </div>
@@ -3570,28 +3909,50 @@ const App: React.FC = () => {
             {activeTab === 'COMANDANTE' && (
               <div className="bg-white dark:bg-gray-800 p-6 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700">
                 <div className="bg-yellow-50 border-l-4 border-yellow-500 p-4 mb-6">
-                  <h2 className="font-bold text-yellow-800 flex items-center gap-2"><AlertTriangle size={20}/> Missões Pendentes de Relatório</h2>
-                  <p className="text-sm text-yellow-700">Você foi designado como Cmt ou Aux de Cmt. Preencha o relatório para enviar à homologação.</p>
+                  <h2 className="font-bold text-yellow-800 flex items-center gap-2"><AlertTriangle size={20}/> Missões Pendentes de Relatório / Fechamento</h2>
+                  <p className="text-sm text-yellow-700">Você foi designado como Cmt, Aux de Cmt ou Gestor da UBM. Preencha o relatório ou realize o fechamento mensal para enviar à homologação.</p>
                 </div>
                 <div className="space-y-3">
-                  {escalas.filter(e => (e.comandanteMatricula === currentUser.matricula || e.auxiliarMatricula === currentUser.matricula) && (e.status === 'em_edicao' || e.status === 'esclarecimento_solicitado')).map(escala => {
+                  {escalas.filter(e => {
+                    const isCmt = e.comandanteMatricula === currentUser.matricula || 
+                      e.auxiliarMatricula === currentUser.matricula || 
+                      e.formData?.gestorMatricula === currentUser.matricula || 
+                      e.gestorMatricula === currentUser.matricula || 
+                      (currentUser.permissoes || []).includes('ADMIN');
+                    if (!isCmt) return false;
+                    if (e.formData?.serviceType === 'DIVERSOS') {
+                      return (e.formData?.isClosedForGestor === true || e.status === 'aguardando_atesto') && (e.status === 'em_edicao' || e.status === 'aguardando_atesto' || e.status === 'esclarecimento_solicitado');
+                    }
+                    return e.status === 'em_edicao' || e.status === 'esclarecimento_solicitado';
+                  }).map(escala => {
+                     const isContinuousService = escala.formData?.serviceType === 'DIVERSOS' && ['Reforço da Guarda', 'Reforço Operacional', 'Reforço Administrativo'].includes(escala.formData?.servicoDiversosSubTipo || '');
                      const evDate = escala.formData.eventDate;
                      const evTime = escala.formData.eventStartTime;
-                     let hasStarted = false;
-                     if (evDate && evTime) {
+                     let hasStarted = isContinuousService ? true : false;
+                     if (!isContinuousService && evDate && evTime) {
                         const dt = new Date(evDate + 'T' + evTime);
                         if (!isNaN(dt.getTime()) && new Date() >= dt) hasStarted = true;
+                     } else if (!isContinuousService) {
+                        hasStarted = true;
                      }
 
                      return (
                      <div key={escala.id} className="p-4 border rounded-lg flex flex-col md:flex-row justify-between items-start md:items-center bg-white dark:bg-gray-900 gap-4">
                        <div className="flex-1">
                          <div className="font-bold text-lg flex items-center gap-2">
-                            {escala.formData.operationName}
+                            {escala.formData.operationName || escala.formData.eventName}
+                            {isContinuousService && <span className="bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-300 text-xs px-2 py-0.5 rounded border border-purple-200 font-bold uppercase">Serviço Contínuo ({escala.formData.servicoDiversosSubTipo})</span>}
                             {escala.status === 'esclarecimento_solicitado' && <span className="bg-red-100 text-red-800 text-xs px-2 py-1 rounded border border-red-200">DEVOLVIDO</span>}
                             {!hasStarted && <span className="bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300 text-xs px-2 py-0.5 rounded border border-amber-200 font-semibold">Aguardando Início</span>}
                          </div>
-                         <div className="text-sm text-gray-500 mb-2">Local: {escala.formData.eventLocal} | Data: {formatAnyDate(escala.formData.eventDate)} às {escala.formData.eventStartTime || '08:00'}</div>
+                         <div className="text-sm text-gray-500 mb-2">
+                           Local: {escala.formData.eventLocal || '-'} | {isContinuousService ? `Mês Ref: ${escala.formData.referenciaMes || formatAnyDate(escala.formData.eventDate)} | Período: ${formatAnyDate(escala.formData.periodoInicio)} a ${formatAnyDate(escala.formData.periodoFim)}` : `Data: ${formatAnyDate(escala.formData.eventDate)} às ${escala.formData.eventStartTime || '08:00'}`}
+                         </div>
+                         {escala.formData.gestorNome && (
+                           <div className="text-xs text-blue-700 dark:text-blue-300 font-medium">
+                             Gestor/Responsável: {escala.formData.gestorPosto} {escala.formData.gestorNome} (Mat: {escala.formData.gestorMatricula})
+                           </div>
+                         )}
                          
                          {!hasStarted && (
                             <p className="text-xs text-amber-600 dark:text-amber-400 font-semibold bg-amber-50 dark:bg-amber-950/20 p-2 rounded border border-amber-200 mt-2">
@@ -3608,7 +3969,9 @@ const App: React.FC = () => {
                        <div className="flex gap-2 self-end md:self-auto">
                           <button onClick={() => setDelegationModal({isOpen: true, escalaId: escala.id})} className="border border-orange-500 text-orange-600 px-4 py-2 rounded font-bold hover:bg-orange-50 whitespace-nowrap text-sm">Delegar Função</button>
                           {hasStarted ? (
-                             <button onClick={() => handleOpenEscala(escala, DocumentType.REPORT)} className="bg-blue-600 text-white px-4 py-2 rounded font-bold hover:bg-blue-700 whitespace-nowrap text-sm">{escala.status === 'esclarecimento_solicitado' ? 'Corrigir Relatório' : 'Preencher Relatório'}</button>
+                             <button onClick={() => handleOpenEscala(escala, DocumentType.REPORT)} className="bg-blue-600 text-white px-4 py-2 rounded font-bold hover:bg-blue-700 whitespace-nowrap text-sm">
+                               {isContinuousService ? 'Realizar Fechamento Mensal' : (escala.status === 'esclarecimento_solicitado' ? 'Corrigir Relatório' : 'Preencher Relatório')}
+                             </button>
                           ) : (
                              <button disabled className="bg-gray-200 dark:bg-gray-700 text-gray-400 dark:text-gray-500 px-4 py-2 rounded font-bold whitespace-nowrap cursor-not-allowed text-sm">Preencher Relatório</button>
                           )}
@@ -3654,8 +4017,8 @@ const App: React.FC = () => {
                        className="w-full p-2 border rounded mb-4 text-black"
                     />
                     <div className="max-h-48 overflow-y-auto mb-4 border rounded">
-                       {state.personnelDb.filter(s => s.nome.toLowerCase().includes(delegationSearch.toLowerCase()) || s.matricula.includes(delegationSearch)).slice(0, 10).map(s => (
-                          <div key={s.matricula} onClick={() => handleDelegateFunction(s)} className="p-2 border-b hover:bg-gray-100 cursor-pointer text-black">
+                       {state.personnelDb.filter(s => s.nome.toLowerCase().includes(delegationSearch.toLowerCase()) || s.matricula.includes(delegationSearch)).slice(0, 10).map((s, idx) => (
+                          <div key={`del-${s.matricula}-${idx}`} onClick={() => handleDelegateFunction(s)} className="p-2 border-b hover:bg-gray-100 cursor-pointer text-black">
                              {s.posto} {s.nome} - {s.matricula}
                           </div>
                        ))}
@@ -4010,9 +4373,9 @@ const App: React.FC = () => {
 
                                 {delegationSuggestions.length > 0 && (
                                   <ul className="bg-white dark:bg-gray-800 border rounded-lg shadow-lg max-h-48 overflow-auto text-sm divide-y dark:divide-gray-700">
-                                    {delegationSuggestions.map(s => (
+                                    {delegationSuggestions.map((s, idx) => (
                                       <li 
-                                        key={s.matricula} 
+                                        key={`delsug-${s.matricula}-${idx}`} 
                                         onClick={() => handleDelegateHomologacaoFunction(delegationModal.escalaId!, s)} 
                                         className="p-2.5 hover:bg-purple-50 dark:hover:bg-gray-700 cursor-pointer flex justify-between items-center"
                                       >
@@ -4168,9 +4531,29 @@ const App: React.FC = () => {
                         <span className="text-xs font-bold text-amber-700 dark:text-yellow-500 uppercase tracking-widest block mb-2">Texto do Memorando (Ofício de Solicitação)</span>
                         <p className="text-sm text-gray-800 dark:text-gray-200 leading-relaxed italic text-justify">
                           {(() => {
-                            const dataStr = escala.formData.memoEventDates || (escala.formData.eventDate ? formatAnyDate(escala.formData.eventDate) : '________');
+                            let dataStr = '';
+                            if (escala.formData.serviceType === 'DIVERSOS') {
+                              const mesRef = escala.formData.referenciaMes || (escala.formData.periodoInicio ? escala.formData.periodoInicio.slice(0, 7) : '');
+                              if (mesRef) {
+                                const parts = mesRef.split('-');
+                                dataStr = `${parts[1]}/${parts[0]}`;
+                              } else {
+                                dataStr = `${escala.formData.periodoInicio ? formatAnyDate(escala.formData.periodoInicio) : ''} a ${escala.formData.periodoFim ? formatAnyDate(escala.formData.periodoFim) : ''}`;
+                              }
+                            } else {
+                              dataStr = escala.formData.memoEventDates || (escala.formData.eventDate ? formatAnyDate(escala.formData.eventDate) : '________');
+                            }
                             const nsStr = escala.formData.memoNsNum && escala.formData.memoNsYear ? `${escala.formData.memoNsNum}/${escala.formData.memoNsYear}` : (escala.formData.memoNs || '_____');
                             const bgStr = escala.formData.memoBgNum && escala.formData.memoBgYear ? `${escala.formData.memoBgNum}/${escala.formData.memoBgYear}` : (escala.formData.memoBg || '_____');
+                            
+                            if (escala.formData.serviceType === 'DIVERSOS') {
+                              return MEMO_LEGAL_TEXT
+                                .replace('realizada {{DATA}}', `prevenção realizada no período de ${dataStr}`)
+                                .replace('{{DATA}}', `no período de ${dataStr}`)
+                                .replace('{{NS}}', nsStr)
+                                .replace('{{BG}}', bgStr);
+                            }
+
                             return MEMO_LEGAL_TEXT
                               .replace('{{DATA}}', dataStr)
                               .replace('{{NS}}', nsStr)
@@ -4194,15 +4577,19 @@ const App: React.FC = () => {
                           </span>
                         </div>
                         <div>
-                          <span className="text-xs font-bold text-gray-400 uppercase tracking-wider block mb-1">Data do Serviço</span>
+                          <span className="text-xs font-bold text-gray-400 uppercase tracking-wider block mb-1">
+                            {escala.formData.serviceType === 'DIVERSOS' ? 'Período do Serviço' : 'Data do Serviço'}
+                          </span>
                           <span className="font-semibold text-gray-800 dark:text-gray-200">
-                            {formattedDate}
+                            {escala.formData.serviceType === 'DIVERSOS'
+                              ? (escala.formData.referenciaMes ? escala.formData.referenciaMes.split('-').reverse().join('/') : (escala.formData.periodoInicio ? `${formatAnyDate(escala.formData.periodoInicio)} a ${formatAnyDate(escala.formData.periodoFim)}` : formattedDate))
+                              : formattedDate}
                           </span>
                         </div>
                         <div>
                           <span className="text-xs font-bold text-gray-400 uppercase tracking-wider block mb-1">Horário de Ativação</span>
                           <span className="font-semibold text-gray-800 dark:text-gray-200">
-                            {escala.formData.eventStartTime || '08:00'} às {escala.formData.eventEndTime || '17:00'}
+                            {escala.formData.serviceType === 'DIVERSOS' ? 'TURNOS DE TRABALHO' : `${escala.formData.eventStartTime || '08:00'} às ${escala.formData.eventEndTime || '17:00'}`}
                           </span>
                         </div>
                         <div>
@@ -4301,6 +4688,18 @@ const App: React.FC = () => {
                                         <td className="p-2 text-center">{statusBadge}</td>
                                         <td className="p-2 text-gray-600 dark:text-gray-400">{funcao}</td>
                                         <td className="p-2 text-xs">
+                                          {escala.formData.serviceType === 'DIVERSOS' && (
+                                            <div className="font-bold text-purple-800 dark:text-purple-300 mb-1 bg-purple-50 dark:bg-purple-950/40 p-1 rounded border border-purple-200 dark:border-purple-800">
+                                              Dias trabalhado(s): {(() => {
+                                                const datesArr = (item.datesList && item.datesList.length > 0)
+                                                  ? item.datesList
+                                                  : (effectiveAlt?.datesList && effectiveAlt.datesList.length > 0)
+                                                    ? effectiveAlt.datesList
+                                                    : (item.date ? item.date.split(',').map((d: string) => d.trim()) : (effectiveAlt?.date ? effectiveAlt.date.split(',').map((d: string) => d.trim()) : []));
+                                                return datesArr.map((d: string) => formatOnlyDayNumbers(d)).join(', ');
+                                              })()}
+                                            </div>
+                                          )}
                                           {(status === 'P/A' || subName !== 'Não informado') && (
                                             <div className="space-y-1">
                                               <div><b>Nome do Substituto:</b> {subName}</div>
@@ -4659,199 +5058,361 @@ const App: React.FC = () => {
               </div>
             )}
 
-            {activeTab === 'PAGAMENTO' && (
-              <div className="bg-white dark:bg-gray-800 p-6 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4 pb-2 border-b border-gray-200 dark:border-gray-700">
-                  <h2 className="text-2xl font-bold flex items-center gap-2"><Banknote /> Prontos para Pagamento</h2>
-                  {pendingPaymentBatchesCount > 0 && (
-                    <span className="bg-amber-100 dark:bg-amber-950/60 text-amber-900 dark:text-amber-300 border border-amber-300 dark:border-amber-700 px-3 py-1 rounded-full text-xs font-bold flex items-center gap-2 shadow-sm">
-                      <span className="bg-red-500 text-white text-xs px-1.5 py-0.2 rounded-full font-black animate-pulse">!</span>
-                      <span>{pendingPaymentBatchesCount} lote(s) pendente(s) de lançamento em folha</span>
-                    </span>
-                  )}
-                </div>
-                {pagamentoEscalaId ? (
-                   <div>
-                       {(() => {
-                           const esc = escalas.find(e => e.id === pagamentoEscalaId);
-                           if (!esc) return null;
-                           const formattedDate = esc.formData.eventDate ? formatAnyDate(esc.formData.eventDate) : 'N/A';
-                           return (
-                               <>
-                                   {/* Event/Service summary card as requested */}
-                                   <div className="mb-6 p-4 bg-gray-50 dark:bg-gray-900/50 rounded-lg border border-gray-200 dark:border-gray-700 grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
-                                       <div className="md:col-span-3 border-b pb-2 mb-1 flex items-center justify-between">
-                                           <div>
-                                               <span className="text-xs font-bold text-gray-500 uppercase block">Evento</span>
-                                               <h3 className="font-bold text-lg text-cbmpa-900 dark:text-yellow-500">{esc.formData.operationName || esc.formData.eventName}</h3>
-                                           </div>
-                                           <div className="flex gap-2">
-                                               <button onClick={() => setPagamentoEscalaId(null)} className="px-4 py-2 border rounded font-bold hover:bg-gray-50 bg-white dark:bg-gray-750 dark:border-gray-600 dark:text-white text-xs">Voltar para Lotes</button>
-                                               <button onClick={() => handleLaunchAllForPayment(pagamentoEscalaId!)} className="bg-green-600 text-white px-4 py-2 rounded font-bold hover:bg-green-700 text-xs shadow-sm transition flex items-center gap-1">
-                                                  <Check size={16} /> Concluir Lançamento
-                                               </button>
-                                           </div>
-                                       </div>
-                                       <div>
-                                           <span className="text-xs font-bold text-gray-500 uppercase block">Local</span>
-                                           <span className="font-medium text-gray-800 dark:text-gray-200">{esc.formData.eventLocal || 'Não informado'}</span>
-                                       </div>
-                                       <div>
-                                           <span className="text-xs font-bold text-gray-500 uppercase block">Data</span>
-                                           <span className="font-medium text-gray-800 dark:text-gray-200">{formattedDate}</span>
-                                       </div>
-                                       <div>
-                                           <span className="text-xs font-bold text-gray-500 uppercase block">Horário</span>
-                                           <span className="font-medium text-gray-800 dark:text-gray-200">{esc.formData.eventStartTime || '08:00'} às {esc.formData.eventEndTime || '17:00'}</span>
-                                       </div>
-                                       <div>
-                                           <span className="text-xs font-bold text-gray-500 uppercase block">UBM de Origem</span>
-                                           <span className="font-medium text-gray-800 dark:text-gray-200">{esc.formData.ubmOrigem || esc.formData.issuerUbm || 'COP'}</span>
-                                       </div>
-                                       <div>
-                                           <span className="text-xs font-bold text-gray-500 uppercase block">Qtd. Militares</span>
-                                           <span className="font-medium text-gray-800 dark:text-gray-200">{(esc.formData.costSheetItems || []).length} militares</span>
-                                       </div>
-                                       <div>
-                                           <span className="text-xs font-bold text-gray-500 uppercase block">Lançados</span>
-                                           <span className="font-medium text-gray-800 dark:text-gray-200">{esc.formData.costSheetItems?.filter((i:any) => i.isLaunched).length || 0} de {esc.formData.costSheetItems?.length || 0}</span>
-                                       </div>
-                                   </div>
+            {activeTab === 'PAGAMENTO' && (() => {
+                const applyPagamentoFilters = (e: any) => {
+                  let dateStr = e.formData.eventDate || e.formData.periodoInicio || '';
+                  if (e.formData.referenciaMes) {
+                    dateStr = `${e.formData.referenciaMes}-01`;
+                  }
+                  const year = dateStr ? dateStr.substring(0, 4) : '';
+                  const month = dateStr ? dateStr.substring(5, 7) : '';
 
-                                   <div className="overflow-x-auto">
-                                       <table className="w-full text-sm">
-                                           <thead className="bg-gray-100 dark:bg-gray-700 text-xs font-bold uppercase text-gray-600 dark:text-gray-300">
-                                              <tr>
-                                                 <th className="p-3 text-left">MF (Matrícula)</th>
-                                                 <th className="p-3 text-left">Posto/Graduação</th>
-                                                 <th className="p-3 text-left">Militar Beneficiário (Pagamento)</th>
-                                                 <th className="p-3 text-left">Cargo/Função</th>
-                                                 <th className="p-3 text-left">UBM</th>
-                                                 <th className="p-3 text-center">Lançamento em Folha</th>
-                                              </tr>
-                                           </thead>
-                                           <tbody>
-                                              {getEffectiveCostItems(esc.formData).map((item: any, idx: number) => {
-                                                  const isL = item.isLaunched;
-                                                  return (
-                                                      <tr key={item.id || idx} className="border-b hover:bg-gray-50/50 dark:hover:bg-gray-800/50">
-                                                          <td className="p-3 font-mono text-xs font-bold">{item.soldierMatricula}</td>
-                                                          <td className="p-3 font-medium">{item.soldierRank || '-'}</td>
-                                                          <td className="p-3">
-                                                              <div className="font-bold text-gray-800 dark:text-gray-100 flex items-center gap-1.5">
-                                                                  <span>{item.soldierName}</span>
-                                                                  {item.isSubstituted && (
-                                                                      <span className="bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 text-[10px] px-2 py-0.5 rounded font-bold uppercase border border-amber-200">
-                                                                          Substituto
-                                                                      </span>
-                                                                  )}
-                                                              </div>
-                                                              {item.isSubstituted && (
-                                                                  <div className="text-[11px] text-amber-700 dark:text-amber-400 font-medium mt-0.5">
-                                                                      Substituiu o militar escalado: <strong>{item.originalSoldierRank} {item.originalSoldierName}</strong> (MF: {item.originalSoldierMatricula})
+                  if (filterPagamentoAno && year !== filterPagamentoAno) return false;
+                  if (filterPagamentoMes && month !== filterPagamentoMes) return false;
+
+                  if (filterPagamentoTipoServico && e.formData.serviceType !== filterPagamentoTipoServico) return false;
+
+                  if (filterPagamentoUbmOrigem) {
+                    const ubm = (e.formData.ubmOrigem || e.formData.issuerUbm || e.ubm || '').toLowerCase();
+                    if (!ubm.includes(filterPagamentoUbmOrigem.toLowerCase())) return false;
+                  }
+
+                  if (filterPagamentoMilitar) {
+                    const query = filterPagamentoMilitar.toLowerCase().trim();
+                    const items = getEffectiveCostItems(e.formData);
+                    const hasMilitar = items.some((item: any) => 
+                      (item.soldierName || '').toLowerCase().includes(query) ||
+                      (item.soldierMatricula || '').toLowerCase().includes(query) ||
+                      (item.originalSoldierName || '').toLowerCase().includes(query) ||
+                      (item.originalSoldierMatricula || '').toLowerCase().includes(query)
+                    );
+                    if (!hasMilitar) return false;
+                  }
+
+                  return true;
+                };
+
+                const filteredPagamentoEscalas = escalas.filter(e => (e.status === 'homologado' || e.status === 'lancado') && applyPagamentoFilters(e));
+
+                return (
+                  <div className="bg-white dark:bg-gray-800 p-6 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4 pb-2 border-b border-gray-200 dark:border-gray-700">
+                      <h2 className="text-2xl font-bold flex items-center gap-2"><Banknote /> Prontos para Pagamento (Lançamento em Folha)</h2>
+                      {pendingPaymentBatchesCount > 0 && (
+                        <span className="bg-amber-100 dark:bg-amber-950/60 text-amber-900 dark:text-amber-300 border border-amber-300 dark:border-amber-700 px-3 py-1 rounded-full text-xs font-bold flex items-center gap-2 shadow-sm">
+                          <span className="bg-red-500 text-white text-xs px-1.5 py-0.2 rounded-full font-black animate-pulse">!</span>
+                          <span>{pendingPaymentBatchesCount} lote(s) pendente(s) de lançamento em folha</span>
+                        </span>
+                      )}
+                    </div>
+
+                    {/* FILTROS DE PESQUISA - PERFIL DE LANÇAMENTO */}
+                    <div className="bg-gray-50 dark:bg-gray-900/40 p-4 rounded-xl border border-gray-200 dark:border-gray-750 mb-6 flex flex-col gap-4">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2 font-bold text-sm text-gray-700 dark:text-gray-300">
+                          <Search size={16} className="text-cbmpa-700 dark:text-yellow-500" />
+                          <span>Filtros de Pesquisa - Perfil de Lançamento</span>
+                        </div>
+                        {(filterPagamentoAno || filterPagamentoMes || filterPagamentoTipoServico || filterPagamentoUbmOrigem || filterPagamentoMilitar) && (
+                          <button 
+                            onClick={() => {
+                              setFilterPagamentoAno('');
+                              setFilterPagamentoMes('');
+                              setFilterPagamentoTipoServico('');
+                              setFilterPagamentoUbmOrigem('');
+                              setFilterPagamentoMilitar('');
+                            }}
+                            className="text-xs text-red-600 dark:text-red-400 hover:underline font-bold flex items-center gap-1"
+                          >
+                            Limpar Filtros
+                          </button>
+                        )}
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-3">
+                        <div>
+                          <label className="block text-[10px] font-bold text-gray-500 dark:text-gray-400 mb-1 uppercase">Ano</label>
+                          <select 
+                            value={filterPagamentoAno} 
+                            onChange={(e) => setFilterPagamentoAno(e.target.value)}
+                            className="w-full p-2 text-xs border rounded-lg bg-white dark:bg-gray-850 dark:border-gray-700 text-gray-800 dark:text-gray-200"
+                          >
+                            <option value="">Todos</option>
+                            <option value="2026">2026</option>
+                            <option value="2025">2025</option>
+                            <option value="2024">2024</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-bold text-gray-500 dark:text-gray-400 mb-1 uppercase">Mês</label>
+                          <select 
+                            value={filterPagamentoMes} 
+                            onChange={(e) => setFilterPagamentoMes(e.target.value)}
+                            className="w-full p-2 text-xs border rounded-lg bg-white dark:bg-gray-850 dark:border-gray-700 text-gray-800 dark:text-gray-200"
+                          >
+                            <option value="">Todos</option>
+                            <option value="01">Janeiro</option>
+                            <option value="02">Fevereiro</option>
+                            <option value="03">Março</option>
+                            <option value="04">Abril</option>
+                            <option value="05">Maio</option>
+                            <option value="06">Junho</option>
+                            <option value="07">Julho</option>
+                            <option value="08">Agosto</option>
+                            <option value="09">Setembro</option>
+                            <option value="10">Outubro</option>
+                            <option value="11">Novembro</option>
+                            <option value="12">Dezembro</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-bold text-gray-500 dark:text-gray-400 mb-1 uppercase">Tipo de Serviço</label>
+                          <select 
+                            value={filterPagamentoTipoServico} 
+                            onChange={(e) => setFilterPagamentoTipoServico(e.target.value)}
+                            className="w-full p-2 text-xs border rounded-lg bg-white dark:bg-gray-850 dark:border-gray-700 text-gray-800 dark:text-gray-200"
+                          >
+                            <option value="">Todos</option>
+                            <option value="PREVENCAO">Prevenção</option>
+                            <option value="DIVERSOS">Diversos</option>
+                            <option value="SERVICO_OPERACIONAL">Serviço Operacional</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-bold text-gray-500 dark:text-gray-400 mb-1 uppercase">UBM de Origem</label>
+                          <select 
+                            value={filterPagamentoUbmOrigem} 
+                            onChange={(e) => setFilterPagamentoUbmOrigem(e.target.value)}
+                            className="w-full p-2 text-xs border rounded-lg bg-white dark:bg-gray-850 dark:border-gray-700 text-gray-800 dark:text-gray-200"
+                          >
+                            <option value="">Todas</option>
+                            {UBMS.map(u => <option key={u} value={u}>{u}</option>)}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-bold text-gray-500 dark:text-gray-400 mb-1 uppercase">Militar (Nome/Mat.)</label>
+                          <input 
+                            type="text" 
+                            placeholder="Nome ou MF..." 
+                            value={filterPagamentoMilitar} 
+                            onChange={(e) => setFilterPagamentoMilitar(e.target.value)}
+                            className="w-full p-2 text-xs border rounded-lg bg-white dark:bg-gray-850 dark:border-gray-700 text-gray-800 dark:text-gray-200"
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    {pagamentoEscalaId ? (
+                       <div>
+                           {(() => {
+                               const esc = escalas.find(e => e.id === pagamentoEscalaId);
+                               if (!esc) return null;
+                               const formattedDate = esc.formData.eventDate ? formatAnyDate(esc.formData.eventDate) : 'N/A';
+                               return (
+                                   <>
+                                       {/* Event/Service summary card */}
+                                       <div className="mb-6 p-4 bg-gray-50 dark:bg-gray-900/50 rounded-lg border border-gray-200 dark:border-gray-700 grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+                                           <div className="md:col-span-3 border-b pb-2 mb-1 flex items-center justify-between">
+                                               <div>
+                                                   <span className="text-xs font-bold text-gray-500 uppercase block">Evento</span>
+                                                   <h3 className="font-bold text-lg text-cbmpa-900 dark:text-yellow-500">{esc.formData.operationName || esc.formData.eventName}</h3>
+                                               </div>
+                                               <div className="flex gap-2">
+                                                   <button onClick={() => setPagamentoEscalaId(null)} className="px-4 py-2 border rounded font-bold hover:bg-gray-50 bg-white dark:bg-gray-750 dark:border-gray-600 dark:text-white text-xs">Voltar para Lotes</button>
+                                                   <button onClick={() => handleLaunchAllForPayment(pagamentoEscalaId!)} className="bg-green-600 text-white px-4 py-2 rounded font-bold hover:bg-green-700 text-xs shadow-sm transition flex items-center gap-1">
+                                                      <Check size={16} /> Concluir Lançamento
+                                                   </button>
+                                               </div>
+                                           </div>
+                                           <div>
+                                               <span className="text-xs font-bold text-gray-500 uppercase block">Local</span>
+                                               <span className="font-medium text-gray-800 dark:text-gray-200">{esc.formData.eventLocal || 'Não informado'}</span>
+                                           </div>
+                                           <div>
+                                               <span className="text-xs font-bold text-gray-500 uppercase block">
+                                                 {esc.formData.serviceType === 'DIVERSOS' ? 'Período / Mês Ref.' : 'Data'}
+                                               </span>
+                                               <span className="font-medium text-gray-800 dark:text-gray-200">
+                                                 {esc.formData.serviceType === 'DIVERSOS' 
+                                                   ? (esc.formData.referenciaMes ? esc.formData.referenciaMes.split('-').reverse().join('/') : (esc.formData.periodoInicio ? `${formatAnyDate(esc.formData.periodoInicio)} a ${formatAnyDate(esc.formData.periodoFim)}` : formattedDate)) 
+                                                   : formattedDate}
+                                               </span>
+                                           </div>
+                                           <div>
+                                               <span className="text-xs font-bold text-gray-500 uppercase block">Horário</span>
+                                               <span className="font-medium text-gray-800 dark:text-gray-200">
+                                                 {esc.formData.serviceType === 'DIVERSOS' ? 'TURNOS DE TRABALHO' : `${esc.formData.eventStartTime || '08:00'} às ${esc.formData.eventEndTime || '17:00'}`}
+                                               </span>
+                                           </div>
+                                           <div>
+                                               <span className="text-xs font-bold text-gray-500 uppercase block">UBM de Origem</span>
+                                               <span className="font-medium text-gray-800 dark:text-gray-200">{esc.formData.ubmOrigem || esc.formData.issuerUbm || 'COP'}</span>
+                                           </div>
+                                           <div>
+                                               <span className="text-xs font-bold text-gray-500 uppercase block">Qtd. Militares</span>
+                                               <span className="font-medium text-gray-800 dark:text-gray-200">{(esc.formData.costSheetItems || []).length} militares</span>
+                                           </div>
+                                           <div>
+                                               <span className="text-xs font-bold text-gray-500 uppercase block">Lançados</span>
+                                               <span className="font-medium text-gray-800 dark:text-gray-200">{esc.formData.costSheetItems?.filter((i:any) => i.isLaunched).length || 0} de {esc.formData.costSheetItems?.length || 0}</span>
+                                           </div>
+                                       </div>
+
+                                       <div className="overflow-x-auto">
+                                           <table className="w-full text-sm">
+                                               <thead className="bg-gray-100 dark:bg-gray-700 text-xs font-bold uppercase text-gray-600 dark:text-gray-300">
+                                                  <tr>
+                                                     <th className="p-3 text-left">MF (Matrícula)</th>
+                                                     <th className="p-3 text-left">Posto/Graduação</th>
+                                                     <th className="p-3 text-left">Militar Beneficiário (Pagamento)</th>
+                                                     <th className="p-3 text-left">Dias Escalados / Trabalhados</th>
+                                                     <th className="p-3 text-left">Cargo/Função</th>
+                                                     <th className="p-3 text-left">UBM</th>
+                                                     <th className="p-3 text-center">Lançamento em Folha</th>
+                                                  </tr>
+                                               </thead>
+                                               <tbody>
+                                                  {getEffectiveCostItems(esc.formData)
+                                                      .filter((item: any) => {
+                                                          if (!filterPagamentoMilitar) return true;
+                                                          const q = filterPagamentoMilitar.toLowerCase().trim();
+                                                          return (item.soldierName || '').toLowerCase().includes(q) ||
+                                                                 (item.soldierMatricula || '').toLowerCase().includes(q) ||
+                                                                 (item.originalSoldierName || '').toLowerCase().includes(q) ||
+                                                                 (item.originalSoldierMatricula || '').toLowerCase().includes(q);
+                                                      })
+                                                      .map((item: any, idx: number) => {
+                                                      const isL = item.isLaunched;
+                                                      return (
+                                                          <tr key={item.id || idx} className="border-b hover:bg-gray-50/50 dark:hover:bg-gray-800/50">
+                                                              <td className="p-3 font-mono text-xs font-bold">{item.soldierMatricula}</td>
+                                                              <td className="p-3 font-medium">{item.soldierRank || '-'}</td>
+                                                              <td className="p-3">
+                                                                  <div className="font-bold text-gray-800 dark:text-gray-100 flex items-center gap-1.5">
+                                                                      <span>{item.soldierName}</span>
+                                                                      {item.isSubstituted && (
+                                                                          <span className="bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 text-[10px] px-2 py-0.5 rounded font-bold uppercase border border-amber-200">
+                                                                              Substituto
+                                                                          </span>
+                                                                      )}
                                                                   </div>
-                                                              )}
-                                                          </td>
-                                                          <td className="p-3">
-                                                              <span className={`px-2 py-0.5 rounded text-[11px] font-bold ${item.isCommander ? "bg-yellow-100 text-yellow-800" : item.isAuxiliar ? "bg-blue-100 text-blue-800" : "bg-gray-100 text-gray-800"}`}>
-                                                                  {item.isCommander ? 'Comandante' : item.isAuxiliar ? 'Aux. do Cmt' : item.role || 'Militar'}
-                                                              </span>
-                                                          </td>
-                                                          <td className="p-3">{item.soldierUbm}</td>
-                                                          <td className="p-3 text-center">
-                                                              {isL ? (
-                                                                  <span className="bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300 px-3 py-1 text-xs font-bold rounded-full border border-green-200">Lançado</span>
-                                                              ) : (
-                                                                  <button onClick={async () => {
-                                                                      const updatedItems = esc.formData.costSheetItems.map((i: any) => i.id === item.id ? { ...i, isLaunched: true } : i);
-                                                                      const newEscala = { ...esc, formData: { ...esc.formData, costSheetItems: updatedItems } };
-                                                                      const newEscalas = escalas.map(e => e.id === pagamentoEscalaId ? newEscala : e);
-                                                                      
-                                                                      setEscalas(newEscalas);
-                                                                      localStorage.setItem(SYSTEM_ESCALAS_KEY, JSON.stringify(newEscalas));
-                                                                      
-                                                                      // Enviar e-mail
-                                                                      const mUser = customUsersDict[item.soldierMatricula];
-                                                                      if (mUser && mUser.email) {
-        await fetch('/api/send-email', {
-           method: 'POST',
-           headers: { 'Content-Type': 'application/json' },
-           body: JSON.stringify({
-               to: mUser.email,
-               subject: 'Aviso de Lançamento de Extraordinária - Pagamento',
-               html: `<p>A extraordinária referente à operação <b>${esc.formData.operationName}</b> foi lançada na sua folha de pagamento.</p><p>Acesse o sistema para conferência no seu painel.</p>`
-           })
-        }).then(async res => { if (!res.ok) alert("Aviso: Falha ao enviar notificação por e-mail."); }).catch(e => alert("Erro ao tentar enviar e-mail de notificação."));
-                                                                      }
-                                                                  }} className="bg-blue-600 text-white px-4 py-1.5 rounded font-bold hover:bg-blue-700 text-xs shadow-sm transition-all hover:scale-[1.02] active:scale-[0.98]">Lançar em Folha</button>
-                                                              )}
-                                                          </td>
-                                                      </tr>
-                                                  );
-                                              })}
-                                           </tbody>
-                                       </table>
-                                   </div>
-                               </>
-                           );
-                       })()}
-                   </div>
-                ) : (
-                   <div className="space-y-3">
-                     {pendingPaymentBatchesCount > 0 && (
-                       <div className="p-3 bg-amber-50 dark:bg-amber-950/40 border-l-4 border-amber-500 text-amber-900 dark:text-amber-200 text-xs font-bold rounded-r flex items-center gap-2 mb-3 shadow-sm">
-                          <span className="bg-red-500 text-white text-xs px-2 py-0.5 rounded-full font-bold animate-pulse">!</span>
-                          <span>Atenção: Existem {pendingPaymentBatchesCount} lote(s) com lançamentos pendentes para folha de pagamento.</span>
+                                                                  {item.isSubstituted && (
+                                                                      <div className="text-[11px] text-amber-700 dark:text-amber-400 font-medium mt-0.5">
+                                                                          Substituiu o militar escalado: <strong>{item.originalSoldierRank} {item.originalSoldierName}</strong> (MF: {item.originalSoldierMatricula})
+                                                                      </div>
+                                                                  )}
+                                                              </td>
+                                                              <td className="p-3 font-mono text-xs text-purple-700 dark:text-purple-300 font-bold">
+                                                                  {(() => {
+                                                                    const datesArr = item.datesList && item.datesList.length > 0 
+                                                                      ? item.datesList 
+                                                                      : (item.date ? item.date.split(',').map((d: string) => d.trim()) : []);
+                                                                    if (esc.formData.serviceType === 'DIVERSOS') {
+                                                                      return datesArr.map((d: string) => formatOnlyDayNumbers(d)).join(', ');
+                                                                    }
+                                                                    return datesArr.map((d: string) => d.includes('/') ? d : d.split('-').reverse().slice(0, 2).join('/')).join(', ');
+                                                                  })()}
+                                                              </td>
+                                                              <td className="p-3">
+                                                                  <span className={`px-2 py-0.5 rounded text-[11px] font-bold ${item.isCommander ? "bg-yellow-100 text-yellow-800" : item.isAuxiliar ? "bg-blue-100 text-blue-800" : "bg-gray-100 text-gray-800"}`}>
+                                                                      {item.isCommander ? 'Comandante' : item.isAuxiliar ? 'Aux. do Cmt' : item.role || 'Militar'}
+                                                                  </span>
+                                                              </td>
+                                                              <td className="p-3">{item.soldierUbm}</td>
+                                                              <td className="p-3 text-center">
+                                                                  {isL ? (
+                                                                      <span className="bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300 px-3 py-1 text-xs font-bold rounded-full border border-green-200">Lançado</span>
+                                                                  ) : (
+                                                                      <button onClick={async () => {
+                                                                          const updatedItems = esc.formData.costSheetItems.map((i: any) => i.id === item.id ? { ...i, isLaunched: true } : i);
+                                                                          const newEscala = { ...esc, formData: { ...esc.formData, costSheetItems: updatedItems } };
+                                                                          const newEscalas = escalas.map(e => e.id === pagamentoEscalaId ? newEscala : e);
+                                                                          
+                                                                          setEscalas(newEscalas);
+                                                                          localStorage.setItem(SYSTEM_ESCALAS_KEY, JSON.stringify(newEscalas));
+                                                                          
+                                                                          // Enviar e-mail
+                                                                          const mUser = customUsersDict[item.soldierMatricula];
+                                                                          if (mUser && mUser.email) {
+                                            await fetch('/api/send-email', {
+                                               method: 'POST',
+                                               headers: { 'Content-Type': 'application/json' },
+                                               body: JSON.stringify({
+                                                   to: mUser.email,
+                                                   subject: 'Aviso de Lançamento de Extraordinária - Pagamento',
+                                                   html: `<p>A extraordinária referente à operação <b>${esc.formData.operationName}</b> foi lançada na sua folha de pagamento.</p><p>Acesse o sistema para conferência no seu painel.</p>`
+                                               })
+                                            }).then(async res => { if (!res.ok) alert("Aviso: Falha ao enviar notificação por e-mail."); }).catch(e => alert("Erro ao tentar enviar e-mail de notificação."));
+                                                                          }
+                                                                      }} className="bg-blue-600 text-white px-4 py-1.5 rounded font-bold hover:bg-blue-700 text-xs shadow-sm transition-all hover:scale-[1.02] active:scale-[0.98]">Lançar em Folha</button>
+                                                                  )}
+                                                              </td>
+                                                          </tr>
+                                                      );
+                                                  })}
+                                               </tbody>
+                                           </table>
+                                       </div>
+                                   </>
+                               );
+                           })()}
                        </div>
-                     )}
-                     {escalas.filter(e => e.status === 'homologado' || e.status === 'lancado').map(escala => {
-                        const effectiveItems = getEffectiveCostItems(escala.formData);
-                        const isAllLaunched = escala.status === 'lancado' || (effectiveItems.length > 0 && effectiveItems.every((i: any) => i.isLaunched));
-                        return (
-                          <div key={escala.id} className={`p-4 border rounded-lg flex justify-between items-center ${isAllLaunched ? 'border-green-300 bg-green-50/60 dark:bg-green-950/20' : 'border-amber-200 bg-amber-50/50 dark:bg-amber-950/20'}`}>
-                            <div>
-                              <div className="font-bold flex items-center gap-2 text-gray-900 dark:text-gray-100">
-                                  {escala.formData.operationName}
-                                  {isAllLaunched && (
-                                    <span className="bg-green-100 text-green-800 text-[10px] font-bold px-2 py-0.5 rounded uppercase border border-green-300 flex items-center gap-1">
-                                      <Check size={12} className="text-green-700" /> Lançado em Folha
-                                    </span>
-                                  )}
+                    ) : (
+                       <div className="space-y-3">
+                         {pendingPaymentBatchesCount > 0 && (
+                           <div className="p-3 bg-amber-50 dark:bg-amber-950/40 border-l-4 border-amber-500 text-amber-900 dark:text-amber-200 text-xs font-bold rounded-r flex items-center gap-2 mb-3 shadow-sm">
+                              <span className="bg-red-500 text-white text-xs px-2 py-0.5 rounded-full font-bold animate-pulse">!</span>
+                              <span>Atenção: Existem {pendingPaymentBatchesCount} lote(s) com lançamentos pendentes para folha de pagamento.</span>
+                           </div>
+                         )}
+                         {filteredPagamentoEscalas.map(escala => {
+                            const effectiveItems = getEffectiveCostItems(escala.formData);
+                            const isAllLaunched = escala.status === 'lancado' || (effectiveItems.length > 0 && effectiveItems.every((i: any) => i.isLaunched));
+                            return (
+                              <div key={escala.id} className={`p-4 border rounded-lg flex justify-between items-center ${isAllLaunched ? 'border-green-300 bg-green-50/60 dark:bg-green-950/20' : 'border-amber-200 bg-amber-50/50 dark:bg-amber-950/20'}`}>
+                                <div>
+                                  <div className="font-bold flex items-center gap-2 text-gray-900 dark:text-gray-100">
+                                      {escala.formData.operationName}
+                                      {isAllLaunched && (
+                                        <span className="bg-green-100 text-green-800 text-[10px] font-bold px-2 py-0.5 rounded uppercase border border-green-300 flex items-center gap-1">
+                                          <Check size={12} className="text-green-700" /> Lançado em Folha
+                                        </span>
+                                      )}
+                                  </div>
+                                  <div className="text-sm text-gray-500 flex gap-4 mt-1">
+                                      <span>Planilha Consolidada ({escala.formData.costSheetItems.length} militares)</span>
+                                      <span>Lançados: {escala.formData.costSheetItems.filter((i:any) => i.isLaunched).length} / {escala.formData.costSheetItems.length}</span>
+                                   </div>
+                                </div>
+                                <div className="flex gap-2">
+                                  <button 
+                                    onClick={() => setPagamentoEscalaId(escala.id)} 
+                                    className={isAllLaunched 
+                                      ? "bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded font-bold flex items-center gap-1.5 text-xs transition shadow-sm" 
+                                      : "bg-yellow-500 hover:bg-yellow-400 text-cbmpa-900 px-4 py-2 rounded font-bold text-xs transition shadow-sm"
+                                    }
+                                  >
+                                    {isAllLaunched ? (
+                                      <>
+                                        <Check size={16} className="text-white" />
+                                        <span>✓ Lançado em Folha</span>
+                                      </>
+                                    ) : (
+                                      <span>Selecionar Lote</span>
+                                    )}
+                                  </button>
+                                </div>
                               </div>
-                              <div className="text-sm text-gray-500 flex gap-4 mt-1">
-                                  <span>Planilha Consolidada ({escala.formData.costSheetItems.length} militares)</span>
-                                  <span>Lançados: {escala.formData.costSheetItems.filter((i:any) => i.isLaunched).length} / {escala.formData.costSheetItems.length}</span>
-                               </div>
-                            </div>
-                            <div className="flex gap-2">
-                              <button 
-                                onClick={() => setPagamentoEscalaId(escala.id)} 
-                                className={isAllLaunched 
-                                  ? "bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded font-bold flex items-center gap-1.5 text-xs transition shadow-sm" 
-                                  : "bg-yellow-500 hover:bg-yellow-400 text-cbmpa-900 px-4 py-2 rounded font-bold text-xs transition shadow-sm"
-                                }
-                              >
-                                {isAllLaunched ? (
-                                  <>
-                                    <Check size={16} className="text-white" />
-                                    <span>✓ Lançado em Folha</span>
-                                  </>
-                                ) : (
-                                  <span>Selecionar Lote</span>
-                                )}
-                              </button>
-                            </div>
-                          </div>
-                        );
-                      })}
-                      
-                      {escalas.filter(e => e.status === "homologado" || e.status === "lancado").length === 0 && (
-                        <div className="text-gray-500 text-center py-8">Nenhum lote pronto para pagamento no momento.</div>
-                     )}
-                   </div>
-                )}
-              </div>
-            )}
+                            );
+                          })}
+                          
+                          {filteredPagamentoEscalas.length === 0 && (
+                            <div className="text-gray-500 text-center py-8">Nenhum lote pronto para pagamento encontrado com os filtros selecionados.</div>
+                         )}
+                       </div>
+                    )}
+                  </div>
+                );
+            })()}
 
           </div>
         )}
@@ -4927,8 +5488,8 @@ const App: React.FC = () => {
                              </div>
                              {showIssuerSuggestions && (
                                <ul className="absolute z-50 w-full bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-md shadow-lg max-h-48 overflow-auto mt-1">
-                                  {issuerSuggestions.map(s => (
-                                    <li key={s.matricula} onClick={() => selectIssuer(s)} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-600 cursor-pointer text-sm border-b border-gray-100 dark:border-gray-600 last:border-0">
+                                  {issuerSuggestions.map((s, idx) => (
+                                    <li key={`iss-${s.matricula}-${idx}`} onClick={() => selectIssuer(s)} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-600 cursor-pointer text-sm border-b border-gray-100 dark:border-gray-600 last:border-0">
                                        <div className="font-bold">{s.posto} {s.nome}</div>
                                        <div className="text-xs text-gray-500 dark:text-gray-400">Mat: {s.matricula}</div>
                                     </li>
@@ -4965,8 +5526,8 @@ const App: React.FC = () => {
                          </div>
                          {showRecipientSuggestions && (
                            <ul className="absolute z-50 w-full bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-md shadow-lg max-h-48 overflow-auto mt-1">
-                             {recipientSuggestions.map(s => (
-                               <li key={s.matricula} onClick={() => selectRecipient(s)} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-600 cursor-pointer text-sm">
+                             {recipientSuggestions.map((s, idx) => (
+                               <li key={`rec-${s.matricula}-${idx}`} onClick={() => selectRecipient(s)} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-600 cursor-pointer text-sm">
                                  {s.posto} {s.nome}
                                </li>
                              ))}
@@ -5058,66 +5619,15 @@ const App: React.FC = () => {
                                {UBMS.map(u => <option key={u} value={u}>{u}</option>)}
                             </select>
                          </div>
-                         <div className="relative md:col-span-2">
-                            <label className="block text-xs font-bold text-gray-600 dark:text-gray-300 mb-1 flex items-center justify-between">
-                              <span>DESTINATÁRIO / HOMOLOGADOR DO PROCESSO</span>
-                              {(state.formData.recipientMatricula || state.formData.homologadorMatricula) && (
-                                <span className="text-cbmpa-600 dark:text-yellow-500 font-semibold">
-                                  Matrícula: {state.formData.recipientMatricula || state.formData.homologadorMatricula}
-                                </span>
-                              )}
-                            </label>
-                            <input 
-                              type="text" 
-                              className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white" 
-                              placeholder="Buscar por nome ou matrícula do militar destinatário/homologador..." 
-                              value={recipientSearchTerm || homologadorSearchTerm} 
-                              onChange={handleRecipientSearchChange} 
-                            />
-                            {showRecipientSuggestions && (
-                              <ul className="absolute z-50 bg-white dark:bg-gray-800 border rounded shadow-lg max-h-48 overflow-auto w-full mt-1 divide-y dark:divide-gray-700">
-                                {recipientSuggestions.map(s => (
-                                  <li 
-                                    key={s.matricula} 
-                                    onClick={() => selectRecipient(s)} 
-                                    className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer text-sm flex justify-between items-center"
-                                  >
-                                    <div>
-                                      <span className="font-bold text-cbmpa-900 dark:text-yellow-500">{s.posto ? s.posto.toUpperCase() + ' ' : ''}{s.nome}</span>
-                                      <span className="text-xs text-gray-500 block">UBM: {s.ubm || 'CBMPA'}</span>
-                                    </div>
-                                    <span className="text-xs bg-gray-100 dark:bg-gray-700 px-2 py-1 rounded font-mono">Mat: {s.matricula}</span>
-                                  </li>
-                                ))}
-                              </ul>
-                            )}
-                         </div>
-                         <div>
-                            <label className="block text-xs font-bold text-gray-600 dark:text-gray-300 mb-1">FUNÇÃO DO DESTINATÁRIO (TEXTO LIVRE)</label>
-                            <input type="text" className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white" placeholder="Ex: Comandante Geral do CBMPA" value={state.formData.recipientCargo || ''} onChange={(e) => handleInputChange('recipientCargo', e.target.value)} />
-                         </div>
-                         <div>
-                            <label className="block text-xs font-bold text-gray-600 dark:text-gray-300 mb-1">TIPO DE SERVIÇO DA ESCALA</label>
-                            <select 
-                              className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white font-semibold"
-                              value={state.formData.serviceType || 'PREVENCAO'}
-                              onChange={(e) => {
-                                const newType = e.target.value;
-                                handleInputChange('serviceType', newType);
-                                setNewCostItem(prev => ({ ...prev, serviceType: newType }));
-                              }}
-                            >
-                              <option value="PREVENCAO">Prevenção Desportiva</option>
-                              <option value="DIVERSOS">Serviços Diversos</option>
-                              <option value="GUARDA_VIDAS">Guarda Vidas</option>
-                              <option value="CORTE_VEGETAL">Corte de Vegetal</option>
-                            </select>
-                         </div>
                       </div>
 
                       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                          <div>
-                            <label className="block text-xs font-bold text-gray-600 dark:text-gray-300 mb-1">DATA DO EVENTO</label>
+                            <label className="block text-xs font-bold text-gray-600 dark:text-gray-300 mb-1">
+                               {state.formData.serviceType === 'DIVERSOS' && ['Reforço da Guarda', 'Reforço Operacional', 'Reforço Administrativo'].includes(state.formData.servicoDiversosSubTipo || '')
+                                 ? 'DATA DE CRIAÇÃO/ASSINATURA DA ESCALA'
+                                 : 'DATA DO EVENTO'}
+                            </label>
                             <input type="date" className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white" value={state.formData.eventDate} onChange={(e) => handleInputChange('eventDate', e.target.value)} />
                          </div>
                          <div>
@@ -5157,10 +5667,251 @@ const App: React.FC = () => {
                          </div>
                       </div>
 
-                      <div className="grid grid-cols-2 gap-2">
-                         <div><label className="block text-xs font-bold text-gray-600 dark:text-gray-300 mb-1">HORA INÍCIO</label><input type="time" className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white" value={state.formData.eventStartTime} onChange={(e) => handleInputChange('eventStartTime', e.target.value)} /></div>
-                         <div><label className="block text-xs font-bold text-gray-600 dark:text-gray-300 mb-1">HORA TÉRMINO</label><input type="time" className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white" value={state.formData.eventEndTime} onChange={(e) => handleInputChange('eventEndTime', e.target.value)} /></div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                         <div className="relative md:col-span-2">
+                            <label className="block text-xs font-bold text-gray-600 dark:text-gray-300 mb-1 flex items-center justify-between">
+                              <span>DESTINATÁRIO / HOMOLOGADOR DO PROCESSO</span>
+                              {(state.formData.recipientMatricula || state.formData.homologadorMatricula) && (
+                                <span className="text-cbmpa-600 dark:text-yellow-500 font-semibold">
+                                  Matrícula: {state.formData.recipientMatricula || state.formData.homologadorMatricula}
+                                </span>
+                              )}
+                            </label>
+                            <input 
+                              type="text" 
+                              className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white" 
+                              placeholder="Buscar por nome ou matrícula do militar destinatário/homologador..." 
+                              value={recipientSearchTerm || homologadorSearchTerm} 
+                              onChange={handleRecipientSearchChange} 
+                            />
+                            {showRecipientSuggestions && (
+                              <ul className="absolute z-50 bg-white dark:bg-gray-800 border rounded shadow-lg max-h-48 overflow-auto w-full mt-1 divide-y dark:divide-gray-700">
+                                {recipientSuggestions.map((s, idx) => (
+                                  <li 
+                                    key={`memo-rec-${s.matricula}-${idx}`} 
+                                    onClick={() => selectRecipient(s)} 
+                                    className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer text-sm flex justify-between items-center"
+                                  >
+                                    <div>
+                                      <span className="font-bold text-cbmpa-900 dark:text-yellow-500">{s.posto ? s.posto.toUpperCase() + ' ' : ''}{s.nome}</span>
+                                      <span className="text-xs text-gray-500 block">UBM: {s.ubm || 'CBMPA'}</span>
+                                    </div>
+                                    <span className="text-xs bg-gray-100 dark:bg-gray-700 px-2 py-1 rounded font-mono">Mat: {s.matricula}</span>
+                                  </li>
+                                ))}
+                              </ul>
+                            )}
+                         </div>
+                         <div>
+                            <label className="block text-xs font-bold text-gray-600 dark:text-gray-300 mb-1">FUNÇÃO DO DESTINATÁRIO (TEXTO LIVRE)</label>
+                            <input type="text" className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white" placeholder="Ex: Comandante Geral do CBMPA" value={state.formData.recipientCargo || ''} onChange={(e) => handleInputChange('recipientCargo', e.target.value)} />
+                         </div>
+                         <div>
+                            <label className="block text-xs font-bold text-gray-600 dark:text-gray-300 mb-1">TIPO DE SERVIÇO DA ESCALA</label>
+                            <select 
+                              className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white font-semibold"
+                              value={state.formData.serviceType || 'PREVENCAO'}
+                              onChange={(e) => {
+                                const newType = e.target.value;
+                                handleInputChange('serviceType', newType);
+                                if (newType === 'DIVERSOS' && !state.formData.servicoDiversosSubTipo) {
+                                  handleInputChange('servicoDiversosSubTipo', 'Reforço da Guarda');
+                                }
+                                setNewCostItem(prev => ({ ...prev, serviceType: newType }));
+                              }}
+                            >
+                              <option value="PREVENCAO">Prevenção Desportiva</option>
+                              <option value="DIVERSOS">Serviços Diversos</option>
+                              <option value="GUARDA_VIDAS">Guarda Vidas</option>
+                              <option value="CORTE_VEGETAL">Corte de Vegetal</option>
+                            </select>
+                         </div>
                       </div>
+
+                      {/* CAMPOS ESPECÍFICOS PARA SERVIÇOS DIVERSOS (REFORÇO DA GUARDA, OPERACIONAL, ADMINISTRATIVO) */}
+                      {state.formData.serviceType === 'DIVERSOS' && (
+                        <div className="bg-purple-50/60 dark:bg-purple-950/20 p-4 rounded-xl border border-purple-200 dark:border-purple-800 space-y-4">
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                              <label className="block text-xs font-bold text-purple-900 dark:text-purple-200 mb-1">SUBTIPO DE SERVIÇO DIVERSO</label>
+                              <select 
+                                className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white font-semibold"
+                                value={state.formData.servicoDiversosSubTipo || 'Reforço da Guarda'}
+                                onChange={(e) => handleInputChange('servicoDiversosSubTipo', e.target.value)}
+                              >
+                                <option value="Reforço da Guarda">Reforço da Guarda</option>
+                                <option value="Reforço Operacional">Reforço Operacional</option>
+                                <option value="Reforço Administrativo">Reforço Administrativo</option>
+                                <option value="Guarda-vidas">Guarda-vidas</option>
+                                <option value="Outro">Outro</option>
+                              </select>
+                            </div>
+
+                            {['Reforço da Guarda', 'Reforço Operacional', 'Reforço Administrativo', 'Guarda-vidas', 'Outro'].includes(state.formData.servicoDiversosSubTipo || '') && (
+                              <div className="relative">
+                                <label className="block text-xs font-bold text-blue-900 dark:text-blue-200 mb-1 flex items-center justify-between">
+                                  <span>GESTOR DA UBM / DIRETOR / CHEFE DA SEÇÃO</span>
+                                  {state.formData.gestorMatricula && (
+                                    <span className="text-blue-700 dark:text-yellow-400 font-mono text-[11px]">
+                                      Mat: {state.formData.gestorMatricula}
+                                    </span>
+                                  )}
+                                </label>
+                                <input 
+                                  type="text" 
+                                  className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white text-xs" 
+                                  placeholder="Digite nome ou matrícula do militar responsável pelo atesto..." 
+                                  value={gestorSearchTerm || (state.formData.gestorNome ? `${state.formData.gestorPosto ? state.formData.gestorPosto.toUpperCase() + ' ' : ''}${state.formData.gestorNome}` : '')} 
+                                  onChange={handleGestorSearchChange} 
+                                />
+                                {showGestorSuggestions && (
+                                  <ul className="absolute z-50 bg-white dark:bg-gray-800 border rounded shadow-lg max-h-48 overflow-auto w-full mt-1 divide-y dark:divide-gray-700">
+                                    {gestorSuggestions.map((s, idx) => (
+                                      <li 
+                                        key={`ges-${s.matricula}-${idx}`} 
+                                        onClick={() => selectGestor(s)} 
+                                        className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer text-xs flex justify-between items-center"
+                                      >
+                                        <div>
+                                          <span className="font-bold text-cbmpa-900 dark:text-yellow-500">{s.posto ? s.posto.toUpperCase() + ' ' : ''}{s.nome}</span>
+                                          <span className="text-[10px] text-gray-500 block">UBM: {s.ubm || 'CBMPA'}</span>
+                                        </div>
+                                        <span className="text-[10px] bg-gray-100 dark:bg-gray-700 px-2 py-0.5 rounded font-mono">Mat: {s.matricula}</span>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                )}
+                              </div>
+                            )}
+                          </div>
+
+                          {['Reforço da Guarda', 'Reforço Operacional', 'Reforço Administrativo', 'Guarda-vidas', 'Outro'].includes(state.formData.servicoDiversosSubTipo || '') && (
+                            <div className="pt-2 border-t border-purple-200 dark:border-purple-800 space-y-2">
+                              <div className="flex items-center justify-between">
+                                <span className="text-xs font-bold text-purple-900 dark:text-purple-200 uppercase">Período e Mês de Referência da Missão</span>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setState(prev => ({
+                                      ...prev,
+                                      formData: {
+                                        ...prev.formData,
+                                        periodoInicio: '',
+                                        periodoFim: ''
+                                      }
+                                    }));
+                                    setSelectedDaysForNewItem([]);
+                                    alert('Os militares já inseridos nesta missão continuam salvos na escala. Defina o novo Início e Fim de Período para incluir mais dias até completar o mês.');
+                                  }}
+                                  className="text-xs bg-purple-700 hover:bg-purple-800 text-white font-bold px-3 py-1 rounded-lg transition shadow-sm flex items-center gap-1"
+                                >
+                                  <Plus size={14} /> Adicionar Novo Período nesta Missão
+                                </button>
+                              </div>
+                              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                <div>
+                                  <label className="block text-xs font-bold text-purple-900 dark:text-purple-200 mb-1">MÊS DE REFERÊNCIA</label>
+                                  <input 
+                                    type="month" 
+                                    className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white text-xs font-bold" 
+                                    value={state.formData.referenciaMes || ''} 
+                                    onChange={(e) => handleInputChange('referenciaMes', e.target.value)} 
+                                  />
+                                </div>
+                                <div>
+                                  <label className="block text-xs font-bold text-purple-900 dark:text-purple-200 mb-1">INÍCIO DO PERÍODO</label>
+                                  <input 
+                                    type="date" 
+                                    className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white text-xs" 
+                                    value={state.formData.periodoInicio || ''} 
+                                    onChange={(e) => handleInputChange('periodoInicio', e.target.value)} 
+                                  />
+                                </div>
+                                <div>
+                                  <label className="block text-xs font-bold text-purple-900 dark:text-purple-200 mb-1">FIM DO PERÍODO</label>
+                                  <input 
+                                    type="date" 
+                                    className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white text-xs" 
+                                    value={state.formData.periodoFim || ''} 
+                                    onChange={(e) => handleInputChange('periodoFim', e.target.value)} 
+                                  />
+                                </div>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {state.formData.serviceType === 'DIVERSOS' ? (
+                        <div className="bg-purple-50/70 dark:bg-purple-950/30 p-3.5 rounded-lg border border-purple-200 dark:border-purple-800 space-y-3">
+                          <div className="flex justify-between items-center">
+                            <label className="block text-xs font-bold text-purple-900 dark:text-purple-200 flex items-center gap-1.5">
+                              <Clock size={16} className="text-purple-700 dark:text-purple-300" />
+                              <span>DEFINIÇÃO DOS TURNOS DE SERVIÇO</span>
+                            </label>
+                            <button
+                              type="button"
+                              onClick={handleAddShift}
+                              className="text-xs bg-purple-700 hover:bg-purple-800 text-white px-3 py-1.5 rounded font-bold flex items-center gap-1 transition shadow-sm"
+                            >
+                              <Plus size={14} /> Adicionar Turno
+                            </button>
+                          </div>
+
+                          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                            {((state.formData.shifts && state.formData.shifts.length > 0)
+                              ? state.formData.shifts
+                              : [
+                                  { id: 'shift-1', name: '1º Turno', startTime: '07:00', endTime: '13:00' },
+                                  { id: 'shift-2', name: '2º Turno', startTime: '13:00', endTime: '19:00' }
+                                ]
+                            ).map((s, idx) => (
+                              <div key={s.id || idx} className="bg-white dark:bg-gray-800 p-2.5 rounded border border-purple-100 dark:border-purple-900 shadow-sm relative space-y-1.5">
+                                <div className="flex justify-between items-center border-b border-gray-100 dark:border-gray-700 pb-1">
+                                  <span className="font-bold text-xs text-purple-900 dark:text-purple-300">
+                                    {s.name || `${idx + 1}º Turno`}
+                                  </span>
+                                  {((state.formData.shifts || []).length > 1) && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleRemoveShift(s.id)}
+                                      className="text-red-500 hover:text-red-700 p-0.5"
+                                      title="Remover Turno"
+                                    >
+                                      <Trash2 size={14} />
+                                    </button>
+                                  )}
+                                </div>
+                                <div className="grid grid-cols-2 gap-2">
+                                  <div>
+                                    <label className="block text-[10px] font-bold text-gray-500 dark:text-gray-400">INÍCIO</label>
+                                    <input
+                                      type="time"
+                                      className="w-full p-1.5 border rounded text-xs dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                                      value={s.startTime || '07:00'}
+                                      onChange={(e) => handleUpdateShift(s.id, 'startTime', e.target.value)}
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className="block text-[10px] font-bold text-gray-500 dark:text-gray-400">TÉRMINO</label>
+                                    <input
+                                      type="time"
+                                      className="w-full p-1.5 border rounded text-xs dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                                      value={s.endTime || '13:00'}
+                                      onChange={(e) => handleUpdateShift(s.id, 'endTime', e.target.value)}
+                                    />
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-2 gap-2">
+                           <div><label className="block text-xs font-bold text-gray-600 dark:text-gray-300 mb-1">HORA INÍCIO</label><input type="time" className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white" value={state.formData.eventStartTime} onChange={(e) => handleInputChange('eventStartTime', e.target.value)} /></div>
+                           <div><label className="block text-xs font-bold text-gray-600 dark:text-gray-300 mb-1">HORA TÉRMINO</label><input type="time" className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white" value={state.formData.eventEndTime} onChange={(e) => handleInputChange('eventEndTime', e.target.value)} /></div>
+                        </div>
+                      )}
 
                       <div>
                          <label className="block text-xs font-bold text-gray-600 dark:text-gray-300 mb-1">OBSERVAÇÃO (OPCIONAL)</label>
@@ -5180,7 +5931,7 @@ const App: React.FC = () => {
                                <input type="text" className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white" placeholder="Matrícula ou Nome..." value={costSearchTerm} onChange={handleCostSearchChange} />
                                {showCostSuggestions && (
                                  <ul className="absolute z-50 bg-white dark:bg-gray-800 border rounded shadow-lg max-h-40 overflow-auto w-full mt-1">
-                                   {costSuggestions.map(s => <li key={s.matricula} onClick={() => selectCostSoldier(s)} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer text-sm">{s.posto} {s.nome}</li>)}
+                                   {costSuggestions.map((s, idx) => <li key={`cost-${s.matricula}-${idx}`} onClick={() => selectCostSoldier(s)} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer text-sm">{s.posto} {s.nome}</li>)}
                                  </ul>
                                )}
                                {(() => {
@@ -5224,6 +5975,135 @@ const App: React.FC = () => {
                              </button>
                            </div>
                          </div>
+
+                         {state.formData.serviceType === 'DIVERSOS' && (
+                           <div className="bg-purple-50 dark:bg-purple-950/30 p-3.5 rounded-lg border border-purple-200 dark:border-purple-800 space-y-3 mt-2">
+                             <div className="flex justify-between items-center flex-wrap gap-2">
+                               <label className="text-xs font-bold text-purple-900 dark:text-purple-200 flex items-center gap-1.5">
+                                 <Calendar size={15} className="text-purple-700 dark:text-purple-300" />
+                                 <span>1º PASSO: SELECIONE OS DIAS DE SERVIÇO DO MILITAR NO PERÍODO ({state.formData.periodoInicio ? formatAnyDate(state.formData.periodoInicio) : 'Início'} a {state.formData.periodoFim ? formatAnyDate(state.formData.periodoFim) : 'Fim'})</span>
+                               </label>
+                               <div className="flex gap-2">
+                                 <button
+                                   type="button"
+                                   onClick={() => {
+                                     const allRange = getDatesInRange(state.formData.periodoInicio, state.formData.periodoFim).map(d => d.formatted);
+                                     setSelectedDaysForNewItem(allRange);
+                                     const shiftsList = (state.formData.shifts && state.formData.shifts.length > 0)
+                                       ? state.formData.shifts
+                                       : [{ id: 'shift-1', name: '1º Turno', startTime: '07:00', endTime: '13:00' }];
+                                     const defaultShift = shiftsList[0]?.name || '1º Turno';
+                                     const newShiftsMap: Record<string, string> = {};
+                                     allRange.forEach(d => {
+                                       newShiftsMap[d] = selectedDayShiftsForNewItem[d] || defaultShift;
+                                     });
+                                     setSelectedDayShiftsForNewItem(newShiftsMap);
+                                   }}
+                                   className="text-[11px] bg-purple-200 hover:bg-purple-300 dark:bg-purple-800 text-purple-900 dark:text-purple-100 px-2.5 py-1 rounded font-bold transition"
+                                 >
+                                   Marcar Todos
+                                 </button>
+                                 <button
+                                   type="button"
+                                   onClick={() => {
+                                     setSelectedDaysForNewItem([]);
+                                     setSelectedDayShiftsForNewItem({});
+                                   }}
+                                   className="text-[11px] bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 text-gray-700 dark:text-gray-300 px-2.5 py-1 rounded font-bold transition"
+                                 >
+                                   Limpar
+                                 </button>
+                               </div>
+                             </div>
+
+                             {getDatesInRange(state.formData.periodoInicio, state.formData.periodoFim).length > 0 ? (
+                               <div className="flex flex-wrap gap-1.5 max-h-40 overflow-y-auto p-2 bg-white dark:bg-gray-800 rounded border dark:border-gray-700">
+                                 {getDatesInRange(state.formData.periodoInicio, state.formData.periodoFim).map(d => {
+                                   const isSelected = selectedDaysForNewItem.includes(d.formatted);
+                                   const shiftsList = (state.formData.shifts && state.formData.shifts.length > 0)
+                                     ? state.formData.shifts
+                                     : [{ id: 'shift-1', name: '1º Turno', startTime: '07:00', endTime: '13:00' }];
+                                   const defaultShift = shiftsList[0]?.name || '1º Turno';
+
+                                   return (
+                                     <button
+                                       key={d.iso}
+                                       type="button"
+                                       onClick={() => {
+                                         if (isSelected) {
+                                           setSelectedDaysForNewItem(prev => prev.filter(x => x !== d.formatted));
+                                           setSelectedDayShiftsForNewItem(prev => {
+                                             const copy = { ...prev };
+                                             delete copy[d.formatted];
+                                             return copy;
+                                           });
+                                         } else {
+                                           setSelectedDaysForNewItem(prev => [...prev, d.formatted]);
+                                           setSelectedDayShiftsForNewItem(prev => ({
+                                             ...prev,
+                                             [d.formatted]: prev[d.formatted] || defaultShift
+                                           }));
+                                         }
+                                       }}
+                                       className={`px-2.5 py-1 rounded text-xs font-mono font-bold border transition-all ${
+                                         isSelected
+                                           ? 'bg-purple-700 text-white border-purple-800 shadow scale-105'
+                                           : 'bg-gray-50 dark:bg-gray-700 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600 hover:bg-purple-100'
+                                       }`}
+                                     >
+                                       {d.formatted} ({d.weekDay})
+                                     </button>
+                                   );
+                                 })}
+                               </div>
+                             ) : (
+                               <p className="text-xs text-purple-800 dark:text-purple-300 italic">
+                                 Selecione o Início e o Fim do Período no formulário para escolher os dias do militar.
+                               </p>
+                             )}
+
+                             {['Reforço da Guarda', 'Reforço Operacional', 'Reforço Administrativo'].includes(state.formData.servicoDiversosSubTipo || '') && selectedDaysForNewItem.length > 0 && (
+                               <div className="bg-white dark:bg-gray-800 p-3 rounded-lg border border-purple-200 dark:border-purple-700 shadow-sm space-y-2 mt-2">
+                                 <label className="text-xs font-bold text-purple-900 dark:text-purple-200 flex items-center gap-1.5">
+                                   <Clock size={16} className="text-purple-700 dark:text-purple-300" />
+                                   <span>2º PASSO: SELECIONE O TURNO PARA CADA DIA SELECIONADO:</span>
+                                 </label>
+                                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 max-h-48 overflow-y-auto p-1">
+                                   {selectedDaysForNewItem.map((dayStr) => {
+                                     const shiftsList = (state.formData.shifts && state.formData.shifts.length > 0)
+                                       ? state.formData.shifts
+                                       : [
+                                           { id: 'shift-1', name: '1º Turno', startTime: '07:00', endTime: '13:00' },
+                                           { id: 'shift-2', name: '2º Turno', startTime: '13:00', endTime: '19:00' }
+                                         ];
+                                     const currentTurn = selectedDayShiftsForNewItem[dayStr] || shiftsList[0]?.name || '1º Turno';
+                                     return (
+                                       <div key={dayStr} className="flex items-center justify-between gap-2 bg-purple-50 dark:bg-purple-950/40 p-2 rounded border border-purple-200 dark:border-purple-800">
+                                         <span className="text-xs font-mono font-bold text-purple-900 dark:text-purple-200 shrink-0">
+                                           {dayStr}
+                                         </span>
+                                         <select
+                                           className="p-1.5 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white text-xs font-bold text-purple-900 dark:text-yellow-400 focus:ring-1 focus:ring-purple-500 w-full"
+                                           value={currentTurn}
+                                           onChange={(e) => {
+                                             const val = e.target.value;
+                                             setSelectedDayShiftsForNewItem(prev => ({ ...prev, [dayStr]: val }));
+                                           }}
+                                         >
+                                           {shiftsList.map((s, idx) => (
+                                             <option key={s.id || idx} value={s.name || `${idx + 1}º Turno`}>
+                                               {s.name || `${idx + 1}º Turno`} ({s.startTime || '07:00'} às {s.endTime || '13:00'})
+                                             </option>
+                                           ))}
+                                         </select>
+                                       </div>
+                                     );
+                                   })}
+                                 </div>
+                               </div>
+                             )}
+                           </div>
+                         )}
                       </div>
                     </div>
 
@@ -5242,6 +6122,9 @@ const App: React.FC = () => {
                                    <th className="p-2.5 text-left text-xs">MATRÍCULA</th>
                                    <th className="p-2.5 text-left text-xs">MILITAR</th>
                                    <th className="p-2.5 text-left text-xs">FUNÇÃO</th>
+                                   {state.formData.serviceType === 'DIVERSOS' && (
+                                     <th className="p-2.5 text-left text-xs">DIAS ESCALADOS</th>
+                                   )}
                                    <th className="p-2.5 text-center text-xs">AÇÃO</th>
                                 </tr>
                              </thead>
@@ -5275,12 +6158,36 @@ const App: React.FC = () => {
                                         </div>
                                         <div className="text-[10px] text-gray-500">{item.soldierUbm}</div>
                                       </td>
-                                      <td className="p-2.5">
-                                         <select className="w-full p-1.5 border rounded dark:bg-gray-700 text-xs dark:border-gray-600 dark:text-white" value={item.role || (item.isCommander ? 'Comandante' : item.isAuxiliar ? 'Aux. do Cmt' : '')} onChange={(e) => updateRole(item.id, e.target.value, 'COST')}>
-                                            <option value="">Selecione...</option>
-                                            {ROLES.map(r => <option key={r} value={r}>{r}</option>)}
-                                         </select>
+                                      <td className="p-2.5 min-w-[140px]">
+                                        <select className="w-full p-1.5 border rounded dark:bg-gray-700 text-xs dark:border-gray-600 dark:text-white" value={item.role || (item.isCommander ? 'Comandante' : item.isAuxiliar ? 'Aux. do Cmt' : '')} onChange={(e) => updateRole(item.id, e.target.value, 'COST')}>
+                                           <option value="">Selecione a função...</option>
+                                           {ROLES.map(r => <option key={r} value={r}>{r}</option>)}
+                                        </select>
                                       </td>
+                                      {state.formData.serviceType === 'DIVERSOS' && (
+                                        <td className="p-2.5">
+                                          <div className="flex flex-wrap gap-1.5 max-w-md">
+                                            {(item.datesList && item.datesList.length > 0 ? item.datesList : (item.date ? item.date.split(',') : [])).map((d: string, idx: number) => {
+                                              const dTrim = d.trim();
+                                              const formattedDisplayDate = formatAnyDate(dTrim);
+                                              const turnStr = (item.dayShifts && (item.dayShifts[dTrim] || item.dayShifts[formattedDisplayDate])) || item.shift || '';
+                                              return (
+                                                <span key={idx} className="inline-flex items-center gap-1.5 bg-purple-100 dark:bg-purple-900/60 text-purple-900 dark:text-purple-100 text-[11px] px-2.5 py-1 rounded font-bold border border-purple-200 dark:border-purple-700 shadow-sm">
+                                                  <span className="font-mono">{formattedDisplayDate}</span>
+                                                  {turnStr && (
+                                                    <>
+                                                      <span className="text-purple-400 font-normal">-</span>
+                                                      <span className="bg-purple-700 text-white text-[10px] px-1.5 py-0.2 rounded font-sans font-bold uppercase">
+                                                        {turnStr}
+                                                      </span>
+                                                    </>
+                                                  )}
+                                                </span>
+                                              );
+                                            })}
+                                          </div>
+                                        </td>
+                                      )}
                                       <td className="p-2.5 text-center">
                                         <button type="button" onClick={() => removeCostItem(item.id)} className="text-red-400 hover:text-red-600 p-1"><Trash2 size={16} /></button>
                                       </td>
@@ -5308,18 +6215,53 @@ const App: React.FC = () => {
                       </button>
                       
                       <div className="flex flex-wrap items-center gap-3">
+                        {state.formData.serviceType === 'DIVERSOS' && (
+                          <button 
+                            type="button" 
+                            onClick={() => {
+                              setPdfPeriodStart(state.formData.periodoInicio || '');
+                              setPdfPeriodEnd(state.formData.periodoFim || '');
+                              setShowPeriodPdfModal(true);
+                            }} 
+                            className="border border-purple-600 text-purple-700 dark:text-purple-300 hover:bg-purple-50 dark:hover:bg-purple-950/30 px-5 py-2.5 rounded-lg font-bold flex items-center gap-2 transition-colors text-xs md:text-sm"
+                          >
+                            <FileText size={18} /> PDF por Período (Divulgação)
+                          </button>
+                        )}
+
                         <button 
                           type="button" 
                           onClick={() => {
                             const currE = escalas.find(e => e.id === editingEscalaId);
                             window.open(generateEscalaOnlyPDF(state, false, currentUser, currE?.escalaApprovalLabel) as string, '_blank');
                           }} 
-                          className="border border-red-600 text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30 px-5 py-2.5 rounded-lg font-bold flex items-center gap-2 transition-colors"
+                          className="border border-red-600 text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30 px-5 py-2.5 rounded-lg font-bold flex items-center gap-2 transition-colors text-xs md:text-sm"
                         >
-                          <Download size={18} /> Ver PDF Final
+                          <Download size={18} /> Ver PDF Final Consolidado
                         </button>
                         
                         {(() => {
+                          if (state.formData.serviceType === 'DIVERSOS') {
+                            return (
+                              <div className="flex flex-wrap items-center gap-3">
+                                <button 
+                                  type="button" 
+                                  onClick={() => handleSaveEscalaAndNotify('em_edicao', 'Escala de Serviço Diverso salva e militares notificados com sucesso!')} 
+                                  className="bg-cbmpa-700 hover:bg-cbmpa-800 text-white px-5 py-2.5 rounded-lg font-bold shadow-sm transition-all flex items-center gap-2 text-xs md:text-sm"
+                                >
+                                  <Save size={18} /> Salvar Escala & Notificar
+                                </button>
+                                <button 
+                                  type="button" 
+                                  onClick={handleFechamentoTotalEscalante} 
+                                  className="bg-purple-700 hover:bg-purple-800 text-white px-5 py-2.5 rounded-lg font-bold shadow-sm transition-all flex items-center gap-2 text-xs md:text-sm"
+                                >
+                                  <CheckCircle2 size={18} /> Fechamento Total da Escala (Enviar ao Gestor)
+                                </button>
+                              </div>
+                            );
+                          }
+
                           const evDate = state.formData.eventDate;
                           const evTime = state.formData.eventStartTime;
                           let isOpen = true;
@@ -5368,14 +6310,23 @@ const App: React.FC = () => {
                            </div>
                         </div>
                         <div className="grid grid-cols-1 md:grid-cols-12 gap-3 mb-3">
-                           <div className="md:col-span-3">
-                              <label className="block text-[10px] font-bold text-gray-600 mb-1 uppercase">DATA</label>
-                              <input type="date" className="w-full p-1.5 text-xs border rounded dark:bg-gray-700 bg-gray-50 text-gray-600 cursor-not-allowed" value={state.formData.eventDate} readOnly />
-                           </div>
-                           <div className="md:col-span-3">
-                              <label className="block text-[10px] font-bold text-gray-600 mb-1 uppercase">DIA DA SEMANA</label>
-                              <input type="text" className="w-full p-1.5 text-xs border rounded dark:bg-gray-700 bg-gray-50 text-gray-600 cursor-not-allowed" value={state.formData.eventDayOfWeek} readOnly />
-                           </div>
+                           {state.formData.serviceType === 'DIVERSOS' ? (
+                             <div className="md:col-span-6">
+                                <label className="block text-[10px] font-bold text-gray-600 mb-1 uppercase">PERÍODO DO EVENTO (MÊS/ANO)</label>
+                                <input type="text" className="w-full p-1.5 text-xs border rounded dark:bg-gray-700 bg-purple-50 text-purple-900 font-bold dark:text-purple-200 cursor-not-allowed" value={state.formData.referenciaMes ? state.formData.referenciaMes.split('-').reverse().join('/') : (state.formData.periodoInicio ? `${formatAnyDate(state.formData.periodoInicio)} A ${formatAnyDate(state.formData.periodoFim)}` : 'N/A')} readOnly />
+                             </div>
+                           ) : (
+                             <>
+                               <div className="md:col-span-3">
+                                  <label className="block text-[10px] font-bold text-gray-600 mb-1 uppercase">DATA</label>
+                                  <input type="date" className="w-full p-1.5 text-xs border rounded dark:bg-gray-700 bg-gray-50 text-gray-600 cursor-not-allowed" value={state.formData.eventDate} readOnly />
+                               </div>
+                               <div className="md:col-span-3">
+                                  <label className="block text-[10px] font-bold text-gray-600 mb-1 uppercase">DIA DA SEMANA</label>
+                                  <input type="text" className="w-full p-1.5 text-xs border rounded dark:bg-gray-700 bg-gray-50 text-gray-600 cursor-not-allowed" value={state.formData.eventDayOfWeek} readOnly />
+                               </div>
+                             </>
+                           )}
                            <div className="md:col-span-3">
                               <label className="block text-[10px] font-bold text-gray-600 mb-1 uppercase">LOCAL</label>
                               <input type="text" className="w-full p-1.5 text-xs border rounded dark:bg-gray-700 bg-gray-50 text-gray-600 cursor-not-allowed" value={state.formData.eventLocal} readOnly />
@@ -5476,8 +6427,10 @@ const App: React.FC = () => {
                               <thead className="bg-gray-100 text-[10px] font-bold uppercase text-gray-600">
                                  <tr>
                                     <th className="p-1 text-left">Nome e Posto</th>
-                                    <th className="p-1 text-center w-40">Situação (P, F, D, A, Pmt)</th>
+                                    <th className="p-1 text-left">Dias Escalados / Trabalhados</th>
+                                    <th className="p-1 text-center w-36">Situação (P, F, D, A, Pmt)</th>
                                     <th className="p-1 text-left">Função</th>
+                                    <th className="p-1 text-center w-12">Ação</th>
                                  </tr>
                               </thead>
                               <tbody>
@@ -5485,14 +6438,44 @@ const App: React.FC = () => {
                                     <React.Fragment key={item.id}>
                                       <tr className={`border-b border-gray-100 ${item.isCommander ? "bg-yellow-50" : ""} ${item.isAuxiliar ? "bg-blue-50" : ""}`}>
                                          <td className="p-1 font-medium">{item.soldierRank} {item.soldierName}</td>
+                                         <td className="p-1">
+                                            <input 
+                                               type="text" 
+                                               className="w-full p-1 border rounded text-xs dark:bg-gray-700 font-mono text-purple-700 dark:text-purple-300 font-semibold"
+                                               value={item.datesList?.length ? item.datesList.join(', ') : (item.date || '')}
+                                               placeholder="Ex: 05/07, 12/07"
+                                               onChange={(e) => {
+                                                  const val = e.target.value;
+                                                  const datesArr = val.split(',').map(d => d.trim()).filter(Boolean);
+                                                  setState(prev => ({
+                                                     ...prev,
+                                                     formData: {
+                                                        ...prev.formData,
+                                                        reportEffectiveItems: (prev.formData.reportEffectiveItems || []).map(i => 
+                                                           i.id === item.id ? { ...i, date: val, datesList: datesArr, quantity: datesArr.length || 1 } : i
+                                                        ),
+                                                        costSheetItems: (prev.formData.costSheetItems || []).map(i =>
+                                                           i.id === item.id ? { ...i, date: val, datesList: datesArr, quantity: datesArr.length || 1 } : i
+                                                        )
+                                                     }
+                                                  }));
+                                               }}
+                                            />
+                                         </td>
                                          <td className="p-1 text-center">
-                                            <select className="w-full p-0.5 border rounded text-xs" value={item.status} onChange={(e) => handleEffectiveStatusChange(item.id, 'status', e.target.value)}>
-                                               <option value="P">PRESENTE</option>
-                                               <option value="F">FALTA</option>
-                                               <option value="D">DISPENSA</option>
-                                               <option value="A">ATRASO</option>
-                                               <option value="P/A">PERMUTA/AUTORIZAÇÃO</option>
-                                            </select>
+                                            {state.formData.serviceType === 'DIVERSOS' ? (
+                                              <span className="inline-block bg-green-100 text-green-800 dark:bg-green-900/50 dark:text-green-300 px-2 py-0.5 rounded text-xs font-bold border border-green-300 dark:border-green-700">
+                                                PRESENTE
+                                              </span>
+                                            ) : (
+                                              <select className="w-full p-0.5 border rounded text-xs" value={item.status} onChange={(e) => handleEffectiveStatusChange(item.id, 'status', e.target.value)}>
+                                                 <option value="P">PRESENTE</option>
+                                                 <option value="F">FALTA</option>
+                                                 <option value="D">DISPENSA</option>
+                                                 <option value="A">ATRASO</option>
+                                                 <option value="P/A">PERMUTA/AUTORIZAÇÃO</option>
+                                              </select>
+                                            )}
                                          </td>
                                          <td className="p-1">
                                             <select className="w-full p-0.5 border rounded dark:bg-gray-700 text-xs" value={item.role || (item.isCommander ? 'Comandante' : item.isAuxiliar ? 'Aux. do Cmt' : '')} onChange={(e) => updateRole(item.id, e.target.value, 'REPORT')}>
@@ -5500,11 +6483,30 @@ const App: React.FC = () => {
                                                {ROLES.map(r => <option key={r} value={r}>{r}</option>)}
                                             </select>
                                          </td>
+                                         <td className="p-1 text-center">
+                                            <button 
+                                               type="button"
+                                               onClick={() => {
+                                                  removeEffectiveItem(item.id);
+                                                  setState(prev => ({
+                                                     ...prev,
+                                                     formData: {
+                                                        ...prev.formData,
+                                                        costSheetItems: (prev.formData.costSheetItems || []).filter(i => i.id !== item.id)
+                                                     }
+                                                  }));
+                                               }}
+                                               className="text-red-500 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950/30 p-1 rounded transition"
+                                               title="Excluir militar do relatório"
+                                            >
+                                               <Trash2 size={14} />
+                                            </button>
+                                         </td>
                                       </tr>
                                       {/* IMPLEMENTAÇÃO DOS CAMPOS DE PERMUTA, DISPENSA E FALTA AQUI */}
                                       {item.status === 'P/A' && (
                                         <tr className="bg-orange-50 border-b border-orange-100">
-                                          <td colSpan={3} className="p-2">
+                                          <td colSpan={5} className="p-2">
                                             <div className="flex flex-col md:flex-row gap-3 items-end">
                                               <div className="flex-1 relative">
                                                 <label className="block text-[10px] font-bold text-orange-800 mb-1">Nome e Matrícula do Substituto</label>
@@ -5521,8 +6523,8 @@ const App: React.FC = () => {
                                                 </div>
                                                 {activeSubstituteId === item.id && substituteSuggestions.length > 0 && (
                                                    <ul className="absolute z-[999] w-full bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-md shadow-lg max-h-48 overflow-auto mt-1">
-                                                      {substituteSuggestions.map(s => (
-                                                        <li key={s.matricula} onMouseDown={() => selectSubstitute(item.id, s)} className="p-1.5 hover:bg-gray-100 dark:hover:bg-gray-600 cursor-pointer text-xs border-b border-gray-100 dark:border-gray-600 last:border-0 relative">
+                                                      {substituteSuggestions.map((s, idx) => (
+                                                        <li key={`sub-${s.matricula}-${idx}`} onMouseDown={() => selectSubstitute(item.id, s)} className="p-1.5 hover:bg-gray-100 dark:hover:bg-gray-600 cursor-pointer text-xs border-b border-gray-100 dark:border-gray-600 last:border-0 relative">
                                                            <div className="font-bold">{s.posto} {s.nome}</div>
                                                            <div className="text-[10px] text-gray-500 dark:text-gray-400">Mat: {s.matricula}</div>
                                                         </li>
@@ -5610,6 +6612,131 @@ const App: React.FC = () => {
                                  ))}
                               </tbody>
                            </table>
+                        </div>
+
+                        {/* Painel de Inserção de Militar pelo Gestor (Fechamento) */}
+                        <div className="mt-4 p-3 bg-blue-50/80 dark:bg-blue-950/30 rounded-lg border border-blue-200 dark:border-blue-800">
+                           <h4 className="font-bold text-xs text-blue-900 dark:text-blue-300 uppercase mb-1 flex items-center gap-1.5">
+                              <PlusCircle size={14} /> Incluir / Inserir Militar no Relatório (Fechamento)
+                           </h4>
+                           <p className="text-[11px] text-gray-600 dark:text-gray-400 mb-3">
+                              Caso um militar tenha sido trocado ou incluído durante a execução periódica do serviço, adicione-o abaixo informando seus dias trabalhados.
+                           </p>
+                           <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-end">
+                              <div className="md:col-span-6 relative">
+                                 <label className="block text-[10px] font-bold text-gray-700 dark:text-gray-300 mb-1 uppercase">Buscar Militar</label>
+                                 <input 
+                                    type="text" 
+                                    placeholder="Digite nome ou matrícula..." 
+                                    value={reportNewSoldierSearch}
+                                    onChange={(e) => {
+                                       const val = e.target.value;
+                                       setReportNewSoldierSearch(val);
+                                       if (val.trim().length >= 2) {
+                                          setReportNewSoldierSuggestions(
+                                             state.personnelDb.filter(p => p.nome.toLowerCase().includes(val.toLowerCase()) || p.matricula.includes(val)).slice(0, 10)
+                                          );
+                                          setShowReportNewSoldierSuggestions(true);
+                                       } else {
+                                          setReportNewSoldierSuggestions([]);
+                                          setShowReportNewSoldierSuggestions(false);
+                                       }
+                                    }}
+                                    className="w-full p-1.5 border rounded text-xs dark:bg-gray-700 dark:border-gray-600"
+                                 />
+                                 {showReportNewSoldierSuggestions && reportNewSoldierSuggestions.length > 0 && (
+                                    <ul className="absolute z-50 left-0 right-0 bg-white dark:bg-gray-800 border rounded shadow-lg max-h-40 overflow-y-auto text-xs mt-1 border-gray-200 dark:border-gray-700">
+                                       {reportNewSoldierSuggestions.map((s, idx) => (
+                                          <li 
+                                             key={`rep-new-${s.matricula}-${idx}`} 
+                                             className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer font-medium border-b last:border-0 border-gray-100 dark:border-gray-700"
+                                             onClick={() => {
+                                                setReportNewSoldierSelected(s);
+                                                setReportNewSoldierSearch(`${s.posto ? s.posto.toUpperCase() + ' ' : ''}${s.nome} (Mat: ${s.matricula})`);
+                                                setShowReportNewSoldierSuggestions(false);
+                                             }}
+                                          >
+                                             <div className="font-bold text-gray-900 dark:text-gray-100">{s.posto} {s.nome}</div>
+                                             <div className="text-[10px] text-gray-500">Mat: {s.matricula} | UBM: {s.ubm}</div>
+                                          </li>
+                                       ))}
+                                    </ul>
+                                 )}
+                              </div>
+
+                              <div className="md:col-span-4">
+                                 <label className="block text-[10px] font-bold text-gray-700 dark:text-gray-300 mb-1 uppercase">Dias Trabalhados (ex: 05/07, 12/07)</label>
+                                 <input 
+                                    type="text" 
+                                    placeholder="Ex: 02/07, 09/07, 16/07" 
+                                    value={reportTempDate}
+                                    onChange={(e) => setReportTempDate(e.target.value)}
+                                    className="w-full p-1.5 border rounded text-xs dark:bg-gray-700 dark:border-gray-600 font-mono"
+                                 />
+                              </div>
+
+                              <div className="md:col-span-2">
+                                 <button 
+                                    type="button" 
+                                    onClick={() => {
+                                       if (!reportNewSoldierSelected) {
+                                          alert("Selecione um militar na busca.");
+                                          return;
+                                       }
+                                       const s = reportNewSoldierSelected;
+                                       const datesArr = reportTempDate.split(',').map(d => d.trim()).filter(Boolean);
+                                       const newItemId = Date.now().toString();
+
+                                       const newItem = {
+                                          id: newItemId,
+                                          soldierName: s.nome,
+                                          soldierRank: s.posto ? s.posto.toUpperCase() : 'SD QBM',
+                                          soldierUbm: s.ubm || 'UBM',
+                                          soldierMf: s.matricula,
+                                          soldierMatricula: s.matricula,
+                                          status: 'P',
+                                          serviceType: state.formData.serviceType,
+                                          datesList: datesArr,
+                                          date: datesArr.join(', '),
+                                          quantity: datesArr.length || 1,
+                                          unitValue: 200,
+                                          role: 'Militar Incluído'
+                                       };
+
+                                       const newEff = [...(state.formData.reportEffectiveItems || []), newItem];
+                                       const newCost = [...(state.formData.costSheetItems || []), {
+                                          id: newItemId,
+                                          soldierName: newItem.soldierName,
+                                          soldierMatricula: newItem.soldierMf,
+                                          soldierRank: newItem.soldierRank,
+                                          soldierUbm: newItem.soldierUbm,
+                                          date: newItem.date,
+                                          datesList: newItem.datesList,
+                                          serviceType: newItem.serviceType,
+                                          quantity: newItem.quantity,
+                                          unitValue: 200,
+                                          isCommander: false
+                                       }];
+
+                                       setState(prev => ({
+                                          ...prev,
+                                          formData: {
+                                             ...prev.formData,
+                                             reportEffectiveItems: newEff,
+                                             costSheetItems: newCost
+                                          }
+                                       }));
+
+                                       setReportNewSoldierSelected(null);
+                                       setReportNewSoldierSearch('');
+                                       setReportTempDate('');
+                                    }}
+                                    className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-1.5 px-3 rounded text-xs flex items-center justify-center gap-1 shadow-sm transition"
+                                 >
+                                    <Plus size={14} /> Adicionar
+                                 </button>
+                              </div>
+                           </div>
                         </div>
                      </div>
 
@@ -5860,14 +6987,19 @@ const App: React.FC = () => {
                            {(() => {
                              const escala = escalas.find(e => e.id === editingEscalaId);
                              const isCmtOrAux = escala?.comandanteMatricula === currentUser.matricula || escala?.auxiliarMatricula === currentUser.matricula;
-                             if (isCmtOrAux && ['em_edicao', 'esclarecimento_solicitado'].includes(escala?.status || '')) {
+                             const isGestor = escala?.formData?.gestorMatricula === currentUser.matricula || escala?.gestorMatricula === currentUser.matricula;
+                             const isAdmin = (currentUser.permissoes || []).includes('ADMIN');
+                             const isAllowed = (isCmtOrAux || isGestor || isAdmin) && ['em_edicao', 'esclarecimento_solicitado'].includes(escala?.status || '');
+
+                             if (isAllowed) {
+                               const isDiversos = escala?.formData?.serviceType === 'DIVERSOS';
                                return (
                                  <div className="flex gap-3">
                                    <button type="button" onClick={() => saveEscalaWorkflow(escala.status, 'Relatório salvo com sucesso!', true)} className="bg-cbmpa-700 text-white px-6 py-2.5 rounded-lg font-bold hover:bg-cbmpa-800 transition-colors">
                                      Salvar Relatório
                                    </button>
-                                   <button type="button" onClick={() => setShowAtestarConfirmModal(editingEscalaId)} className="bg-green-600 text-white px-6 py-2.5 rounded-lg font-bold hover:bg-green-700 transition-colors">
-                                     Atestar Serviço
+                                   <button type="button" onClick={() => setShowAtestarConfirmModal(editingEscalaId)} className="bg-green-600 text-white px-6 py-2.5 rounded-lg font-bold hover:bg-green-700 transition-colors flex items-center gap-1.5">
+                                     <CheckCircle2 size={16} /> {isDiversos ? 'Atestar Execução de Todos os Serviços' : 'Atestar Serviço'}
                                    </button>
                                  </div>
                                );
@@ -5948,8 +7080,14 @@ const App: React.FC = () => {
                          <span className="font-semibold text-gray-800 dark:text-gray-200">{esc.formData.eventLocal || 'Não informado'}</span>
                       </div>
                       <div className="bg-gray-50 dark:bg-gray-900/40 p-3 rounded-lg border dark:border-gray-700">
-                         <span className="text-xs text-gray-400 font-bold block uppercase mb-1">Data / Horário</span>
-                         <span className="font-semibold text-gray-800 dark:text-gray-200">{formattedDate} - {esc.formData.eventStartTime || '08:00'} às {esc.formData.eventEndTime || '17:00'}</span>
+                         <span className="text-xs text-gray-400 font-bold block uppercase mb-1">
+                           {esc.formData.serviceType === 'DIVERSOS' ? 'Período (Mês/Ano)' : 'Data / Horário'}
+                         </span>
+                         <span className="font-semibold text-gray-800 dark:text-gray-200">
+                           {esc.formData.serviceType === 'DIVERSOS' 
+                             ? (esc.formData.referenciaMes ? esc.formData.referenciaMes.split('-').reverse().join('/') : (esc.formData.periodoInicio ? `${formatAnyDate(esc.formData.periodoInicio)} a ${formatAnyDate(esc.formData.periodoFim)}` : formattedDate)) 
+                             : `${formattedDate} - ${esc.formData.eventStartTime || '08:00'} às ${esc.formData.eventEndTime || '17:00'}`}
+                         </span>
                       </div>
                       <div className="bg-gray-50 dark:bg-gray-900/40 p-3 rounded-lg border dark:border-gray-700">
                          <span className="text-xs text-gray-400 font-bold block uppercase mb-1">UBM de Origem</span>
@@ -6101,6 +7239,19 @@ const App: React.FC = () => {
                                               obsText = `Atraso: ${reportAlt?.atrasoJustification || 'Não informado'}`;
                                            }
 
+                                           let daysText = '';
+                                           if (m.datesList && m.datesList.length > 0) {
+                                              daysText = `Dias trabalhado(s): ${m.datesList.map((d: string) => d.includes('/') ? d : d.split('-').reverse().slice(0, 2).join('/')).join(', ')}`;
+                                           } else if (m.date) {
+                                              daysText = `Dias trabalhado(s): ${m.date.split(',').map((d: string) => d.trim().includes('/') ? d.trim() : d.trim().split('-').reverse().slice(0, 2).join('/')).join(', ')}`;
+                                           }
+
+                                           if (obsText === 'Cumprimento de serviço normal' && daysText) {
+                                              obsText = daysText;
+                                           } else if (daysText) {
+                                              obsText = `${daysText} | ${obsText}`;
+                                           }
+
                                            return (
                                               <tr key={m.id || idx} className="hover:bg-gray-50/50 dark:hover:bg-gray-900/40 transition">
                                                  <td className="p-2 font-mono text-gray-700 dark:text-gray-300">{m.soldierMatricula || m.soldierMf}</td>
@@ -6160,6 +7311,110 @@ const App: React.FC = () => {
                    }} className="flex-1 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg font-bold text-sm shadow-sm transition">Atestar e Enviar</button>
                 </div>
              </div>
+          </div>
+        )}
+        {/* Modal de Seleção de PDF por Período (Divulgação para a Tropa) */}
+        {showPeriodPdfModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+            <div className="bg-white dark:bg-gray-800 p-6 rounded-xl w-full max-w-lg shadow-2xl border border-purple-200 dark:border-purple-800 space-y-4">
+              <div className="flex justify-between items-center border-b pb-3 dark:border-gray-700">
+                <h3 className="text-base font-bold text-purple-900 dark:text-purple-300 flex items-center gap-2">
+                  <FileText className="text-purple-600 dark:text-purple-400" size={20} />
+                  <span>Gerar PDF da Escala por Período (Divulgação)</span>
+                </h3>
+                <button 
+                  type="button" 
+                  onClick={() => setShowPeriodPdfModal(false)} 
+                  className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 font-bold"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <p className="text-xs text-gray-600 dark:text-gray-300 leading-relaxed">
+                Selecione o intervalo de datas do período para divulgar a escala separadamente à tropa ou escolha a Escala Única Consolidada contendo todos os dias da missão.
+              </p>
+
+              <div className="bg-purple-50/60 dark:bg-purple-950/40 p-3.5 rounded-lg border border-purple-200 dark:border-purple-800 space-y-3">
+                <span className="block text-xs font-bold text-purple-900 dark:text-purple-200">SELEÇÃO DO PERÍODO</span>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[11px] font-bold text-gray-600 dark:text-gray-300 mb-1">INÍCIO DO PERÍODO</label>
+                    <input 
+                      type="date" 
+                      className="w-full p-2 border rounded text-xs dark:bg-gray-700 dark:border-gray-600 dark:text-white font-mono font-bold"
+                      value={pdfPeriodStart} 
+                      onChange={(e) => setPdfPeriodStart(e.target.value)} 
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-bold text-gray-600 dark:text-gray-300 mb-1">FIM DO PERÍODO</label>
+                    <input 
+                      type="date" 
+                      className="w-full p-2 border rounded text-xs dark:bg-gray-700 dark:border-gray-600 dark:text-white font-mono font-bold"
+                      value={pdfPeriodEnd} 
+                      onChange={(e) => setPdfPeriodEnd(e.target.value)} 
+                    />
+                  </div>
+                </div>
+
+                {state.formData.periodoInicio && state.formData.periodoFim && (
+                  <button 
+                    type="button" 
+                    onClick={() => {
+                      setPdfPeriodStart(state.formData.periodoInicio || '');
+                      setPdfPeriodEnd(state.formData.periodoFim || '');
+                    }}
+                    className="text-[11px] text-purple-700 dark:text-purple-300 hover:underline font-bold block"
+                  >
+                    Usar Período Atual da Escala ({formatAnyDate(state.formData.periodoInicio)} a {formatAnyDate(state.formData.periodoFim)})
+                  </button>
+                )}
+              </div>
+
+              <div className="flex flex-col gap-2 pt-2">
+                <button 
+                  type="button" 
+                  onClick={() => {
+                    const currE = escalas.find(e => e.id === editingEscalaId);
+                    window.open(
+                      generateEscalaOnlyPDF(
+                        state, 
+                        false, 
+                        currentUser, 
+                        currE?.escalaApprovalLabel, 
+                        { startDate: pdfPeriodStart, endDate: pdfPeriodEnd }
+                      ) as string, 
+                      '_blank'
+                    );
+                    setShowPeriodPdfModal(false);
+                  }}
+                  className="w-full bg-purple-700 hover:bg-purple-800 text-white p-2.5 rounded-lg font-bold text-xs md:text-sm flex items-center justify-center gap-2 shadow-sm transition-all"
+                >
+                  <FileText size={16} /> Gerar PDF do Período ({pdfPeriodStart ? formatAnyDate(pdfPeriodStart) : 'Início'} a {pdfPeriodEnd ? formatAnyDate(pdfPeriodEnd) : 'Fim'})
+                </button>
+
+                <button 
+                  type="button" 
+                  onClick={() => {
+                    const currE = escalas.find(e => e.id === editingEscalaId);
+                    window.open(generateEscalaOnlyPDF(state, false, currentUser, currE?.escalaApprovalLabel) as string, '_blank');
+                    setShowPeriodPdfModal(false);
+                  }}
+                  className="w-full border border-purple-600 text-purple-800 dark:text-purple-300 hover:bg-purple-50 dark:hover:bg-purple-950/40 p-2.5 rounded-lg font-bold text-xs md:text-sm flex items-center justify-center gap-2 transition-all"
+                >
+                  <Download size={16} /> Gerar Escala Única Consolidada (Todos os Dias)
+                </button>
+
+                <button 
+                  type="button" 
+                  onClick={() => setShowPeriodPdfModal(false)}
+                  className="w-full text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 p-1.5 text-xs font-bold"
+                >
+                  Cancelar
+                </button>
+              </div>
+            </div>
           </div>
         )}
       </main>
