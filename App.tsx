@@ -150,7 +150,35 @@ const App: React.FC = () => {
   });
   const [roleRequests, setRoleRequests] = useState<any[]>(() => {
     const saved = localStorage.getItem('ROLE_REQUESTS');
-    return saved ? JSON.parse(saved) : [];
+    const list: any[] = saved ? JSON.parse(saved) : [];
+    try {
+      const usersDb = JSON.parse(localStorage.getItem('CUSTOM_USERS_DB') || '{}');
+      Object.values(usersDb).forEach((u: any) => {
+        if (u && u.solicitacoes && Array.isArray(u.solicitacoes)) {
+          u.solicitacoes.forEach((sol: any) => {
+            if (sol.status === 'PENDING') {
+              const cleanM = u.matricula ? u.matricula.split(/[-/\s.]/)[0] : '';
+              const exists = list.some((r: any) => 
+                (r.matricula === u.matricula || (cleanM && r.matricula && r.matricula.split(/[-/\s.]/)[0] === cleanM)) && 
+                r.role === sol.role && 
+                r.status === 'PENDING'
+              );
+              if (!exists) {
+                list.push({
+                  id: sol.id || (Date.now().toString() + '_' + Math.random().toString(36).substring(2, 6)),
+                  matricula: u.matricula,
+                  nome: u.nome || 'Militar',
+                  role: sol.role,
+                  status: 'PENDING',
+                  ubm: sol.ubm
+                });
+              }
+            }
+          });
+        }
+      });
+    } catch(e) {}
+    return list;
   });
   const [adminUserSearch, setAdminUserSearch] = useState('');
   const [showFirstAccessModal, setShowFirstAccessModal] = useState(false);
@@ -242,29 +270,80 @@ const App: React.FC = () => {
         return;
      }
 
-     const existing = roleRequests.find(r => r.matricula === currentUser.matricula && r.role === role && r.status === 'PENDING');
+     const cleanMat = currentUser.matricula.split(/[-/\s.]/)[0];
+     const currentReqs = JSON.parse(localStorage.getItem('ROLE_REQUESTS') || '[]');
+
+     const existing = currentReqs.find((r: any) => 
+       (r.matricula === currentUser.matricula || (r.matricula && r.matricula.split(/[-/\s.]/)[0] === cleanMat)) && 
+       r.role === role && 
+       r.status === 'PENDING'
+     );
      
+     const newReq = { 
+       id: existing ? existing.id : (Date.now().toString() + '_' + Math.random().toString(36).substring(2, 6)), 
+       matricula: currentUser.matricula, 
+       nome: currentUser.nome, 
+       role, 
+       status: 'PENDING', 
+       ubm 
+     };
+
+     let newReqs = currentReqs;
      if (!existing) {
-         const newReqs = [...roleRequests, { id: Date.now().toString(), matricula: currentUser.matricula, nome: currentUser.nome, role, status: 'PENDING', ubm }];
-         setRoleRequests(newReqs);
-         localStorage.setItem('ROLE_REQUESTS', JSON.stringify(newReqs));
+         newReqs = [...currentReqs, newReq];
+     } else {
+         newReqs = currentReqs.map((r: any) => r.id === existing.id ? newReq : r);
      }
+
+     setRoleRequests(newReqs);
+     localStorage.setItem('ROLE_REQUESTS', JSON.stringify(newReqs));
+
+     // Also update user profile in CUSTOM_USERS_DB so request persists across accounts/sessions
+     const currentDict = JSON.parse(localStorage.getItem('CUSTOM_USERS_DB') || '{}');
+     let userObj = currentDict[currentUser.matricula] || currentDict[cleanMat] || { ...currentUser };
+     const existingSol = userObj.solicitacoes || [];
+     userObj.solicitacoes = [...existingSol.filter((s: any) => s.role !== role), { id: newReq.id, role, ubm, status: 'PENDING' }];
+
+     currentDict[currentUser.matricula] = userObj;
+     currentDict[cleanMat] = userObj;
+     localStorage.setItem('CUSTOM_USERS_DB', JSON.stringify(currentDict));
+     setCustomUsersDict(currentDict);
+
+     // Sync immediately with backend server for automatic admin visibility across browsers/sessions
      try {
-      await fetch('/api/send-email', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-              to: 'sipcdal@gmail.com',
-              subject: `Nova Solicitação de Perfil: ${role}${ubm ? ` (${ubm})` : ""}`,
-              html: `<div style="font-family: sans-serif; padding: 20px;">\n                       <h2>Sistema de Escalas - Solicitação de Acesso</h2>\n                       <p>O militar <strong>${currentUser.nome}</strong> (Matrícula: ${currentUser.matricula}) solicitou acesso ao perfil: <strong>${role}</strong>${ubm ? ` para a UBM: <strong>${ubm}</strong>` : ""}.</p>\n                       <p>Acesse o painel de Administração no sistema para aprovar ou recusar a solicitação.</p>\n                      </div>`
-          })
-      });
-
+       await fetch('/api/role-requests', {
+         method: 'POST',
+         headers: { 'Content-Type': 'application/json' },
+         body: JSON.stringify({ request: newReq })
+       });
+       await fetch('/api/custom-users', {
+         method: 'POST',
+         headers: { 'Content-Type': 'application/json' },
+         body: JSON.stringify({ matricula: currentUser.matricula, user: userObj })
+       });
      } catch (e) {
-       alert("Erro de rede ao notificar administrador. A solicitação foi salva no sistema.");
+       console.error("Erro ao sincronizar solicitação com o servidor:", e);
      }
 
-     alert(existing ? "Re-enviamos a notificação para o Administrador!" : "Solicitação enviada ao Administrador!");
+     try {
+       await fetch('/api/send-email', {
+           method: 'POST',
+           headers: { 'Content-Type': 'application/json' },
+           body: JSON.stringify({
+               to: 'sipcdal@gmail.com',
+               subject: `Nova Solicitação de Perfil: ${role}${ubm ? ` (${ubm})` : ""}`,
+               html: `<div style="font-family: sans-serif; padding: 20px;">
+                       <h2>Sistema de Escalas - Solicitação de Acesso</h2>
+                       <p>O militar <strong>${currentUser.nome}</strong> (Matrícula: ${currentUser.matricula}) solicitou acesso ao perfil: <strong>${role}</strong>${ubm ? ` para a UBM: <strong>${ubm}</strong>` : ""}.</p>
+                       <p>Acesse o painel de Administração no sistema para aprovar ou recusar a solicitação.</p>
+                      </div>`
+           })
+       });
+     } catch (e) {
+       console.error("Falha ao enviar e-mail ao administrador", e);
+     }
+
+     alert(existing ? "Re-enviamos a notificação para o Administrador!" : "Solicitação enviada com sucesso ao Administrador!");
   };
 
   // Mantido o seu estado original do formulário
@@ -641,10 +720,75 @@ const App: React.FC = () => {
   }, [state.formData.reportEffectiveItems, state.formData.eventDate, state.formData.serviceType]);
 
   useEffect(() => {
-    if (activeTab === 'ADMIN') {
-       const saved = localStorage.getItem('ROLE_REQUESTS');
-       if (saved) setRoleRequests(JSON.parse(saved));
-    }
+    let isMounted = true;
+
+    const syncWithServer = async () => {
+      try {
+        const [resReqs, resUsers] = await Promise.all([
+          fetch('/api/role-requests').then(r => r.ok ? r.json() : null).catch(() => null),
+          fetch('/api/custom-users').then(r => r.ok ? r.json() : null).catch(() => null)
+        ]);
+
+        if (!isMounted) return;
+
+        let serverDict: Record<string, any> = {};
+        if (resUsers && resUsers.customUsers) {
+          serverDict = resUsers.customUsers;
+          setCustomUsersDict(prev => {
+            const merged = { ...prev, ...resUsers.customUsers };
+            localStorage.setItem('CUSTOM_USERS_DB', JSON.stringify(merged));
+            return merged;
+          });
+        }
+
+        const localSaved = JSON.parse(localStorage.getItem('ROLE_REQUESTS') || '[]');
+        let list: any[] = (resReqs && Array.isArray(resReqs.requests)) ? [...resReqs.requests] : [];
+
+        localSaved.forEach((lr: any) => {
+          if (!list.some(sr => sr.id === lr.id)) {
+            list.push(lr);
+          }
+        });
+
+        const mergedDict = { ...customUsersDict, ...serverDict };
+        Object.values(mergedDict).forEach((u: any) => {
+          if (u && u.solicitacoes && Array.isArray(u.solicitacoes)) {
+            u.solicitacoes.forEach((sol: any) => {
+              if (sol.status === 'PENDING') {
+                const cleanM = u.matricula ? u.matricula.split(/[-/\s.]/)[0] : '';
+                const exists = list.some((r: any) => 
+                  (r.matricula === u.matricula || (cleanM && r.matricula && r.matricula.split(/[-/\s.]/)[0] === cleanM)) && 
+                  r.role === sol.role && 
+                  r.status === 'PENDING'
+                );
+                if (!exists) {
+                  list.push({
+                    id: sol.id || (Date.now().toString() + '_' + Math.random().toString(36).substring(2, 6)),
+                    matricula: u.matricula,
+                    nome: u.nome || 'Militar',
+                    role: sol.role,
+                    status: 'PENDING',
+                    ubm: sol.ubm
+                  });
+                }
+              }
+            });
+          }
+        });
+
+        setRoleRequests(list);
+        localStorage.setItem('ROLE_REQUESTS', JSON.stringify(list));
+      } catch (e) {
+        console.error("Erro na sincronização de solicitações:", e);
+      }
+    };
+
+    syncWithServer();
+    const interval = setInterval(syncWithServer, 3000);
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
   }, [activeTab]);
 
   useEffect(() => {
@@ -711,21 +855,30 @@ const App: React.FC = () => {
   // --- LÓGICA DE NEGÓCIO DO SISTEMA (NOVAS FUNÇÕES) ---
 
   const handleApproveRole = async (reqId: string, approve: boolean) => {
-     const currentReqs = JSON.parse(localStorage.getItem('ROLE_REQUESTS') || '[]');
-     const req = currentReqs.find((r:any) => r.id === reqId);
+     const localReqs = JSON.parse(localStorage.getItem('ROLE_REQUESTS') || '[]');
+     const combinedReqs = [...roleRequests];
+     localReqs.forEach((r: any) => {
+       if (!combinedReqs.some(x => x.id === r.id)) combinedReqs.push(r);
+     });
+
+     const req = combinedReqs.find((r:any) => r.id === reqId);
      if (!req) return;
      
+     const cleanMat = req.matricula ? req.matricula.split(/[-/\s.]/)[0] : '';
+
      if (approve) {
          const currentDict = JSON.parse(localStorage.getItem('CUSTOM_USERS_DB') || '{}');
-         let userToUpdate = currentDict[req.matricula];
+         let userToUpdate = currentDict[req.matricula] || (cleanMat ? currentDict[cleanMat] : null);
          if (!userToUpdate) {
-             const mockUser = MOCK_USERS.find(u => u.matricula === req.matricula);
+             const mockUser = MOCK_USERS.find(u => u.matricula === req.matricula || (cleanMat && u.matricula.split(/[-/\s.]/)[0] === cleanMat));
              if (mockUser) {
                  userToUpdate = { ...mockUser };
              } else {
-                 const soldier = state.personnelDb.find(s => s.matricula === req.matricula);
+                 const soldier = state.personnelDb.find(s => s.matricula === req.matricula || (cleanMat && s.matricula.split(/[-/\s.]/)[0] === cleanMat));
                  if (soldier) {
                      userToUpdate = { matricula: soldier.matricula, nome: soldier.nome, posto: soldier.posto, permissoes: [] };
+                 } else {
+                     userToUpdate = { matricula: req.matricula, nome: req.nome || 'Militar', permissoes: [] };
                  }
              }
          }
@@ -739,16 +892,22 @@ const App: React.FC = () => {
                      userToUpdate.ubm = req.ubm;
                  }
              }
-             // Save directly to localStorage to avoid closure issues
-             currentDict[req.matricula] = userToUpdate;
-             localStorage.setItem('CUSTOM_USERS_DB', JSON.stringify(currentDict));
-             setCustomUsersDict(currentDict); // Update state
 
-             if (currentUser && currentUser.matricula === req.matricula) {
+             if (userToUpdate.solicitacoes && Array.isArray(userToUpdate.solicitacoes)) {
+                 userToUpdate.solicitacoes = userToUpdate.solicitacoes.map((s: any) => 
+                   (s.role === req.role || s.id === req.id) ? { ...s, status: 'APPROVED' } : s
+                 );
+             }
+
+             currentDict[req.matricula] = userToUpdate;
+             if (cleanMat) currentDict[cleanMat] = userToUpdate;
+             localStorage.setItem('CUSTOM_USERS_DB', JSON.stringify(currentDict));
+             setCustomUsersDict(currentDict);
+
+             if (currentUser && (currentUser.matricula === req.matricula || (cleanMat && currentUser.matricula.split(/[-/\s.]/)[0] === cleanMat))) {
                  setCurrentUser(userToUpdate);
              }
 
-             // Send email to the user notifying about the approval
              if (userToUpdate.email) {
                  try {
                     await fetch('/api/send-email', {
@@ -757,19 +916,45 @@ const App: React.FC = () => {
                         body: JSON.stringify({
                             to: userToUpdate.email,
                             subject: 'Sistema de Escalas - Acesso Aprovado',
-                            html: `<div style="font-family: sans-serif; padding: 20px;">\n                                     <h2>Solicitação Aprovada</h2>\n                                     <p>Sua solicitação de acesso para o perfil <strong>${req.role}</strong> foi <strong>aprovada</strong> pelo administrador.</p>\n                                     <p>Você pode acessar o sistema para usar as suas novas permissões.</p>\n                                    </div>`
+                            html: `<div style="font-family: sans-serif; padding: 20px;">
+                                     <h2>Solicitação Aprovada</h2>
+                                     <p>Sua solicitação de acesso para o perfil <strong>${req.role}</strong> foi <strong>aprovada</strong> pelo administrador.</p>
+                                     <p>Você pode acessar o sistema para usar as suas novas permissões.</p>
+                                    </div>`
                         })
                     });
                  } catch (e) {
-                     alert("Acesso aprovado, mas falha ao enviar notificação por e-mail.");
+                     console.error("Acesso aprovado, falha ao enviar e-mail", e);
                  }
              }
          }
+     } else {
+         const currentDict = JSON.parse(localStorage.getItem('CUSTOM_USERS_DB') || '{}');
+         let userToUpdate = currentDict[req.matricula] || (cleanMat ? currentDict[cleanMat] : null);
+         if (userToUpdate && userToUpdate.solicitacoes) {
+             userToUpdate.solicitacoes = userToUpdate.solicitacoes.map((s: any) => 
+               (s.role === req.role || s.id === req.id) ? { ...s, status: 'REJECTED' } : s
+             );
+             currentDict[req.matricula] = userToUpdate;
+             if (cleanMat) currentDict[cleanMat] = userToUpdate;
+             localStorage.setItem('CUSTOM_USERS_DB', JSON.stringify(currentDict));
+             setCustomUsersDict(currentDict);
+         }
      }
      
-     const newReqs = currentReqs.map((r:any) => r.id === reqId ? { ...r, status: approve ? 'APPROVED' : 'REJECTED' } : r);
+     const newReqs = combinedReqs.map((r:any) => r.id === reqId ? { ...r, status: approve ? 'APPROVED' : 'REJECTED' } : r);
      setRoleRequests(newReqs);
      localStorage.setItem('ROLE_REQUESTS', JSON.stringify(newReqs));
+
+     try {
+       await fetch(`/api/role-requests/${reqId}`, {
+         method: 'PUT',
+         headers: { 'Content-Type': 'application/json' },
+         body: JSON.stringify({ status: approve ? 'APPROVED' : 'REJECTED' })
+       });
+     } catch (e) {
+       console.error("Erro ao atualizar status no servidor:", e);
+     }
   };
 
   const handleRemoveRole = (matricula: string, role: string) => {
@@ -792,6 +977,12 @@ const App: React.FC = () => {
              currentDict[matricula] = userToUpdate;
              localStorage.setItem('CUSTOM_USERS_DB', JSON.stringify(currentDict));
              setCustomUsersDict({ ...currentDict });
+
+             fetch('/api/custom-users', {
+               method: 'POST',
+               headers: { 'Content-Type': 'application/json' },
+               body: JSON.stringify({ matricula, user: userToUpdate })
+             }).catch(console.error);
 
              if (currentUser && currentUser.matricula === matricula) {
                  setCurrentUser({ ...userToUpdate });
@@ -825,10 +1016,15 @@ const App: React.FC = () => {
      }
   };
 
-  const handleClearRequests = () => {
+  const handleClearRequests = async () => {
      if (window.confirm("Deseja realmente limpar todas as solicitações de acesso?")) {
          localStorage.removeItem('ROLE_REQUESTS');
          setRoleRequests([]);
+         try {
+           await fetch('/api/role-requests', { method: 'DELETE' });
+         } catch (e) {
+           console.error("Erro ao limpar solicitações no servidor:", e);
+         }
          alert("Todas as solicitações de acesso foram limpas com sucesso.");
      }
   };
@@ -868,46 +1064,78 @@ const App: React.FC = () => {
 
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
+    setLoginError('');
     let foundUser: any = null;
-    const matInput = loginData.matricula.trim();
-    
-    let customUser = customUsersDict[matInput];
-    if (!customUser) {
-        customUser = Object.values(customUsersDict).find(u => u.email && u.email.toLowerCase() === matInput.toLowerCase()) as any;
+    const rawInput = loginData.matricula.trim();
+
+    if (!rawInput) {
+      setLoginError('Informe a matrícula ou e-mail.');
+      return;
     }
 
-    if (customUser && customUser.senha === loginData.senha) {
-       // Ensure administrador always has ADMIN permissions even if cached old
-       if (customUser.matricula === 'administrador' && !customUser.permissoes?.includes('ADMIN')) {
-          customUser.permissoes = ['ADMIN', 'ESCALANTE', 'APROVADOR', 'PAGAMENTO'];
-          saveCustomUser(customUser.matricula, customUser);
-       }
-       if (customUser.matricula === 'escalante' && !customUser.ubmEscalante) {
-          customUser.ubmEscalante = '1º GBM';
-          saveCustomUser(customUser.matricula, customUser);
-       }
-       foundUser = customUser;
-    } else if (!customUser && loginData.senha === '123456') {
-       const mockUser = MOCK_USERS.find(u => u.matricula === matInput);
-       if (mockUser) {
-           foundUser = { ...mockUser };
+    const isEmail = rawInput.includes('@');
+    // Extract base matricula without verification digit (e.g., 57189387-1 or 57189387/1 -> 57189387)
+    const cleanMatInput = (rawInput.toLowerCase() === 'administrador' || rawInput.toLowerCase() === 'escalante')
+      ? rawInput.toLowerCase()
+      : rawInput.split(/[-/\s.]/)[0];
+
+    // 1. Search custom registered users DB
+    let customUser = isEmail
+      ? (Object.values(customUsersDict) as any[]).find(u => u && u.email && u.email.toLowerCase() === rawInput.toLowerCase())
+      : (customUsersDict[cleanMatInput] || (Object.values(customUsersDict) as any[]).find(u => u && (u.matricula === cleanMatInput || (u.matricula && u.matricula.split(/[-/\s.]/)[0] === cleanMatInput))));
+
+    // 2. Search mock users
+    const mockUser = isEmail
+      ? (MOCK_USERS as any[]).find(u => u.email && u.email.toLowerCase() === rawInput.toLowerCase())
+      : (MOCK_USERS as any[]).find(u => u.matricula === cleanMatInput || u.matricula.split(/[-/\s.]/)[0] === cleanMatInput);
+
+    // 3. Search personnelDb
+    const soldier = isEmail
+      ? state.personnelDb.find(s => s.email && s.email.toLowerCase() === rawInput.toLowerCase())
+      : state.personnelDb.find(s => s.matricula === cleanMatInput || (s.matricula && s.matricula.split(/[-/\s.]/)[0] === cleanMatInput));
+
+    // Check if user exists in database
+    const existsInDb = Boolean(customUser || mockUser || soldier);
+
+    if (!existsInDb) {
+      setLoginError('Matrícula ou e-mail não encontrado na base de dados do sistema. Verifique a matrícula (sem o dígito) ou solicite seu cadastro ao administrador.');
+      return;
+    }
+
+    if (customUser) {
+       if (customUser.senha === loginData.senha) {
+          if (customUser.matricula === 'administrador' && !customUser.permissoes?.includes('ADMIN')) {
+             customUser.permissoes = ['ADMIN', 'ESCALANTE', 'APROVADOR', 'PAGAMENTO'];
+             saveCustomUser(customUser.matricula, customUser);
+          }
+          if (customUser.matricula === 'escalante' && !customUser.ubmEscalante) {
+             customUser.ubmEscalante = '1º GBM';
+             saveCustomUser(customUser.matricula, customUser);
+          }
+          foundUser = customUser;
        } else {
-           const soldier = state.personnelDb.find(s => s.matricula === matInput);
-           if (soldier) {
-               foundUser = { matricula: soldier.matricula, nome: soldier.nome, posto: soldier.posto, permissoes: [] };
-           } else {
-               foundUser = { matricula: matInput, nome: 'Militar', posto: 'SD', permissoes: [] };
-           }
+          setLoginError('Senha incorreta.');
+          return;
        }
-       if (foundUser) foundUser.isFirstAccess = true;
-    } else if (customUser && customUser.senha !== loginData.senha) {
-       setLoginError('Senha incorreta.');
-       return;
-    } else if (!customUser && loginData.senha !== '123456') {
-        const mockUser = MOCK_USERS.find(u => u.matricula === matInput && u.senha === loginData.senha);
-        if (mockUser) {
-            foundUser = mockUser;
-        }
+    } else {
+       if (loginData.senha === '123456') {
+          if (mockUser) {
+              foundUser = { ...mockUser };
+          } else if (soldier) {
+              foundUser = { 
+                matricula: soldier.matricula.split(/[-/\s.]/)[0], 
+                nome: soldier.nome, 
+                posto: soldier.posto || soldier.cargo, 
+                permissoes: [] 
+              };
+          }
+          if (foundUser) foundUser.isFirstAccess = true;
+       } else if (mockUser && mockUser.senha && mockUser.senha === loginData.senha) {
+          foundUser = mockUser;
+       } else {
+          setLoginError('Senha incorreta. Para o primeiro acesso de usuários da base, utilize a senha padrão 123456.');
+          return;
+       }
     }
 
     if (foundUser) {
@@ -2907,8 +3135,16 @@ const App: React.FC = () => {
               <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1">Matrícula ou E-mail</label>
               <div className="relative">
                 <User className="absolute left-3 top-3 text-gray-400" size={18} />
-                <input type="text" required className="w-full pl-10 pr-3 py-2 border rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white" value={loginData.matricula} onChange={e => setLoginData({...loginData, matricula: e.target.value})} />
+                <input 
+                  type="text" 
+                  required 
+                  placeholder="Matrícula (sem o dígito) ou e-mail..."
+                  className="w-full pl-10 pr-3 py-2 border rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white" 
+                  value={loginData.matricula} 
+                  onChange={e => setLoginData({...loginData, matricula: e.target.value})} 
+                />
               </div>
+              <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-1">Informe sua matrícula sem o dígito verificador ou seu e-mail cadastrado.</p>
             </div>
             <div>
               <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1">Senha</label>
